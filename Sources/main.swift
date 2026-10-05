@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 struct Entry: Equatable {
     let url: URL
@@ -62,7 +63,7 @@ final class FileTable: NSTableView {
     }
 }
 
-final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate {
+final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSTextFieldDelegate, NSCollectionViewDataSource, NSCollectionViewDelegate, NSMenuDelegate {
     let table = FileTable()
     let grid = FileGrid()
     let scroll = ZoomScrollView()
@@ -98,6 +99,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     required init?(coder: NSCoder) { fatalError() }
     override func loadView() {
         view = NSView()
+        restoreArrangement()
         path.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         path.maximumNumberOfLines = 1
         (path.cell as? NSTextFieldCell)?.isScrollable = true
@@ -149,6 +151,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         let indexes = IndexSet(entries.indices.filter { selected.contains(entries[$0].url) })
         table.reloadData(); gridLayout.invalidateLayout(); grid.reloadData()
         table.selectRowIndexes(indexes, byExtendingSelection: false); grid.selectionIndexes = indexes
+        updateStatus()
     }
     func setMode(grid enabled: Bool) {
         let selected = Set(selection)
@@ -218,6 +221,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
             error?(NSError(domain: "MintFiles", code: 4, userInfo: [NSLocalizedDescriptionKey: "This folder is unavailable: \(candidate.path)"])); path.stringValue = folder.path; return
         }
         folder = candidate
+        restoreArrangement()
         entries = []; render(selected: [])
         if record {
             history = Array(history.prefix(historyIndex + 1)); history.append(candidate); historyIndex = history.count - 1
@@ -271,14 +275,127 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
             switch key {
             case "size": comparison = a.size == b.size ? a.url.lastPathComponent.localizedStandardCompare(b.url.lastPathComponent) : (a.size < b.size ? .orderedAscending : .orderedDescending)
             case "date": comparison = (a.modified ?? .distantPast).compare(b.modified ?? .distantPast)
-            case "kind": comparison = a.kind.localizedStandardCompare(b.kind)
+            case "kind": comparison = broadType(a).localizedStandardCompare(broadType(b))
+            case "detailedType": comparison = detailedType(a).localizedStandardCompare(detailedType(b))
+            case "extension": comparison = a.url.pathExtension.localizedStandardCompare(b.url.pathExtension)
             default: comparison = a.url.lastPathComponent.localizedStandardCompare(b.url.lastPathComponent)
             }
-            return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
+            let resolved = comparison == .orderedSame ? a.url.lastPathComponent.localizedStandardCompare(b.url.lastPathComponent) : comparison
+            return ascending ? resolved == .orderedAscending : resolved == .orderedDescending
         }
     }
     func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
         let selected = Set(selection); entries = sorted(entries); render(selected: selected)
+        saveArrangement()
+    }
+    private var arrangementKey: String { "arrangement:" + folder.standardizedFileURL.path }
+    private func restoreArrangement() {
+        let saved = UserDefaults.standard.dictionary(forKey: arrangementKey)
+        table.sortDescriptors = [NSSortDescriptor(key: saved?["key"] as? String ?? "name", ascending: saved?["ascending"] as? Bool ?? true)]
+    }
+    private func saveArrangement() {
+        let descriptor = table.sortDescriptors.first
+        UserDefaults.standard.set(["key": descriptor?.key ?? "name", "ascending": descriptor?.ascending ?? true], forKey: arrangementKey)
+    }
+    private func broadType(_ entry: Entry) -> String {
+        guard !entry.directory else { return "Folder" }
+        guard let type = UTType(filenameExtension: entry.url.pathExtension) else { return "File" }
+        for (parent, name): (UTType, String) in [(.image, "Image"), (.movie, "Video"), (.audio, "Audio"), (.text, "Text"), (.archive, "Archive")] {
+            if type.conforms(to: parent) { return name }
+        }
+        return type.localizedDescription ?? entry.kind
+    }
+    private func detailedType(_ entry: Entry) -> String {
+        entry.directory ? "Folder" : UTType(filenameExtension: entry.url.pathExtension)?.localizedDescription ?? entry.kind
+    }
+    func arrangementMenu() -> NSMenuItem {
+        let root = NSMenuItem(title: "Arrange Items", action: nil, keyEquivalent: "")
+        let submenu = NSMenu(); submenu.delegate = self
+        for (title, key) in [("By Name", "name"), ("By Size", "size"), ("By Type", "kind"), ("By Detailed Type", "detailedType"), ("By Modification Date", "date"), ("By Extension", "extension")] {
+            let item = NSMenuItem(title: title, action: #selector(arrangeItems(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = key; submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let reverse = NSMenuItem(title: "Reversed Order", action: #selector(reverseArrangement(_:)), keyEquivalent: "")
+        reverse.target = self; submenu.addItem(reverse); root.submenu = submenu
+        return root
+    }
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu.items.contains(where: { $0.identifier?.rawValue == "openWith" }) {
+            updateOpenWith(menu)
+            return
+        }
+        let descriptor = table.sortDescriptors.first
+        for item in menu.items {
+            if let key = item.representedObject as? String { item.state = key == (descriptor?.key ?? "name") ? .on : .off }
+            else if item.action == #selector(reverseArrangement(_:)) { item.state = descriptor?.ascending == false ? .on : .off }
+        }
+    }
+    @objc private func arrangeItems(_ sender: NSMenuItem) {
+        guard let key = sender.representedObject as? String else { return }
+        table.sortDescriptors = [NSSortDescriptor(key: key, ascending: table.sortDescriptors.first?.ascending ?? true)]
+    }
+    @objc private func reverseArrangement(_ sender: NSMenuItem) {
+        table.sortDescriptors = [NSSortDescriptor(key: table.sortDescriptors.first?.key ?? "name", ascending: !(table.sortDescriptors.first?.ascending ?? true))]
+    }
+    private func applicationName(_ url: URL) -> String {
+        FileManager.default.displayName(atPath: url.path).replacingOccurrences(of: ".app", with: "")
+    }
+    private func applicationIcon(_ url: URL) -> NSImage {
+        let icon = NSWorkspace.shared.icon(forFile: url.path).copy() as! NSImage
+        icon.size = NSSize(width: 16, height: 16); return icon
+    }
+    private func updateOpenWith(_ menu: NSMenu) {
+        guard let root = menu.items.first(where: { $0.identifier?.rawValue == "openWith" }), let open = menu.items.first else { return }
+        let files = selectedIndexes.compactMap { entries.indices.contains($0) ? entries[$0] : nil }
+        let urls = files.map(\.url)
+        open.title = "Open"; open.image = nil
+        root.isHidden = files.isEmpty || files.contains(where: { $0.directory })
+        guard !root.isHidden, let first = urls.first else { root.submenu = nil; return }
+        let workspace = NSWorkspace.shared
+        let defaults = urls.map { workspace.urlForApplication(toOpen: $0) }
+        let defaultApp = defaults.first.flatMap { $0 }
+        let commonDefault = defaultApp != nil && defaults.allSatisfy { $0 == defaultApp }
+        if commonDefault, let app = defaultApp {
+            open.title = "Open With " + applicationName(app); open.image = applicationIcon(app)
+        }
+        var apps = Set(workspace.urlsForApplications(toOpen: first))
+        for url in urls.dropFirst() { apps.formIntersection(workspace.urlsForApplications(toOpen: url)) }
+        if commonDefault, let app = defaultApp { apps.remove(app) }
+        let submenu = NSMenu()
+        var seenApplications = Set<String>()
+        for app in apps.sorted(by: { applicationName($0).localizedStandardCompare(applicationName($1)) == .orderedAscending }) {
+            let identity = Bundle(url: app)?.bundleIdentifier ?? app.standardizedFileURL.path
+            guard seenApplications.insert(identity).inserted else { continue }
+            let item = NSMenuItem(title: applicationName(app), action: #selector(openWithApplication(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = app; item.image = applicationIcon(app); submenu.addItem(item)
+        }
+        if urls.count == 1 {
+            if !submenu.items.isEmpty { submenu.addItem(.separator()) }
+            let other = NSMenuItem(title: "Other Application…", action: #selector(chooseApplication(_:)), keyEquivalent: "")
+            other.target = self; submenu.addItem(other)
+        }
+        root.submenu = submenu; root.isHidden = submenu.items.isEmpty
+    }
+    private func launch(_ app: URL, files: [URL]) {
+        NSWorkspace.shared.open(files, withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration()) { [weak self] _, failure in
+            if let failure { DispatchQueue.main.async { self?.error?(failure) } }
+        }
+    }
+    @objc private func openWithApplication(_ sender: NSMenuItem) {
+        guard let app = sender.representedObject as? URL else { return }
+        launch(app, files: selection)
+    }
+    @objc private func chooseApplication(_ sender: NSMenuItem) {
+        let files = selection
+        guard !files.isEmpty, let window = view.window else { return }
+        let picker = NSOpenPanel()
+        picker.title = "Open With Other Application"; picker.prompt = "Open"
+        picker.directoryURL = URL(fileURLWithPath: "/Applications")
+        picker.allowedContentTypes = [.applicationBundle]; picker.canChooseDirectories = false
+        picker.beginSheetModal(for: window) { [weak self] response in
+            if response == .OK, let app = picker.url { self?.launch(app, files: files) }
+        }
     }
     func numberOfRows(in tableView: NSTableView) -> Int { entries.count }
     func tableViewSelectionDidChange(_ notification: Notification) { updateStatus() }
@@ -478,7 +595,14 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
             for (title, action) in [("Open", #selector(openSelection)), ("Copy", #selector(copyFiles)), ("Cut", #selector(cutFiles)), ("Paste", #selector(pasteFiles)), ("Rename…", #selector(rename)), ("Move to Trash", #selector(trash)), ("New Folder…", #selector(newFolder)), ("Open in Terminal", #selector(terminal))] {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; menu.addItem(item)
             }
-            p.table.menu = menu; p.grid.menu = menu.copy() as? NSMenu
+            let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
+            openWith.identifier = NSUserInterfaceItemIdentifier("openWith")
+            menu.insertItem(openWith, at: 1); menu.delegate = p
+            p.table.menu = menu
+            let gridMenu = menu.copy() as! NSMenu
+            gridMenu.addItem(.separator()); gridMenu.addItem(p.arrangementMenu())
+            gridMenu.delegate = p
+            p.grid.menu = gridMenu
         }
     }
     @objc func newTab(_ sender: Any?) {
