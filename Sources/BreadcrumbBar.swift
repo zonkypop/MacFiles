@@ -4,6 +4,16 @@ private final class PathButton: NSButton {
     var url: URL?
     var currentFolder = false
     var symbol: String?
+    private var hovered = false
+    private var hoverTracking: NSTrackingArea?
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let tracking = NSTrackingArea(rect: .zero, options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect], owner: self, userInfo: nil)
+        addTrackingArea(tracking); hoverTracking = tracking
+    }
+    override func mouseEntered(with event: NSEvent) { hovered = true; needsDisplay = true }
+    override func mouseExited(with event: NSEvent) { hovered = false; needsDisplay = true }
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance(); needsDisplay = true
     }
@@ -11,6 +21,10 @@ private final class PathButton: NSButton {
         let pressed = cell?.isHighlighted == true
         (pressed ? FileTheme.selection : currentFolder ? FileTheme.activePath : FileTheme.chrome).setFill()
         bounds.fill()
+        if hovered && !pressed {
+            NSColor.labelColor.withAlphaComponent(0.04).setFill()
+            bounds.fill()
+        }
         NSColor.separatorColor.setFill()
         NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
         let textFont = NSFont.systemFont(ofSize: 13, weight: currentFolder ? .semibold : .regular)
@@ -22,8 +36,13 @@ private final class PathButton: NSButton {
         let total = min(bounds.width - 16, textSize.width + iconWidth + gap)
         let x = (bounds.width - total) / 2
         if let symbol, let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            let configured = icon.withSymbolConfiguration(.init(pointSize: iconWidth, weight: .semibold).applying(.init(paletteColors: [.labelColor]))) ?? icon
-            configured.draw(in: NSRect(x: x, y: (bounds.height - iconWidth) / 2, width: iconWidth, height: iconWidth))
+            let configured = icon.withSymbolConfiguration(.init(pointSize: iconWidth, weight: title.isEmpty ? .bold : .semibold).applying(.init(paletteColors: [.labelColor]))) ?? icon
+            let naturalSize = configured.size
+            let scale = min(iconWidth / max(1, naturalSize.width), iconWidth / max(1, naturalSize.height))
+            let drawSize = NSSize(width: naturalSize.width * scale, height: naturalSize.height * scale)
+            configured.draw(in: NSRect(x: x + (iconWidth - drawSize.width) / 2,
+                                      y: (bounds.height - drawSize.height) / 2,
+                                      width: drawSize.width, height: drawSize.height))
         }
         if !title.isEmpty {
             (title as NSString).draw(in: NSRect(x: x + iconWidth + gap, y: (bounds.height - textSize.height) / 2, width: max(0, total - iconWidth - gap), height: textSize.height), withAttributes: attributes)
@@ -39,7 +58,8 @@ final class BreadcrumbBar: NSView {
         super.init(frame: frame)
         stack.wantsLayer = true
         stack.layer?.borderWidth = 1; stack.layer?.borderColor = NSColor.separatorColor.cgColor
-        stack.layer?.cornerRadius = 2; stack.layer?.masksToBounds = true
+        stack.layer?.cornerRadius = 6
+        stack.layer?.cornerCurve = .continuous; stack.layer?.masksToBounds = true
         stack.spacing = 0; stack.alignment = .centerY; stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: leadingAnchor), stack.centerYAnchor.constraint(equalTo: centerYAnchor), stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor)])
@@ -61,7 +81,7 @@ final class BreadcrumbBar: NSView {
         var ancestors: [URL] = []; var current = folder
         while true { ancestors.insert(current, at: 0); if current.path == "/" { break }; current.deleteLastPathComponent() }
         let popup = PathButton(title: "", target: self, action: #selector(showAncestors(_:)))
-        popup.isBordered = false; popup.symbol = "chevron.left"
+        popup.isBordered = false; popup.symbol = "chevron.backward"
         popup.toolTip = "Parent folders"; popup.setAccessibilityLabel("Parent folders")
         let menu = NSMenu()
         for url in ancestors {

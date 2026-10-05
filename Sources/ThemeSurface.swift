@@ -9,6 +9,8 @@ enum FileTheme {
     // Nearly neutral charcoal; the small channel difference retains a cool tint.
     static let chrome = adaptive("FileChrome", light: .windowBackgroundColor,
         dark: NSColor(srgbRed: 0.145, green: 0.146, blue: 0.155, alpha: 1))
+    static let status = adaptive("FileStatus", light: NSColor(calibratedWhite: 0.94, alpha: 1),
+        dark: NSColor(srgbRed: 0.1025, green: 0.1035, blue: 0.111, alpha: 1))
     static let sidebar = adaptive("FileSidebar", light: .controlBackgroundColor,
         dark: NSColor(srgbRed: 0.160, green: 0.161, blue: 0.169, alpha: 1))
     static let canvas = adaptive("FileCanvas", light: .textBackgroundColor,

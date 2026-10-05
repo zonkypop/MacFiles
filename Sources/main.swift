@@ -505,10 +505,11 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     }
     required init?(coder: NSCoder) { fatalError() }
     func button(_ title: String, _ symbol: String, _ action: Selector) -> NSButton {
-        let b = NSButton(title: title, target: self, action: action)
+        let b = ToolbarButton(title: title, target: self, action: action)
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title); b.imagePosition = .imageOnly; b.bezelStyle = .inline
         b.isBordered = false; b.toolTip = symbol == "chevron.left" ? "Back" : symbol == "chevron.right" ? "Forward" : symbol == "arrow.up" ? "Up" : symbol == "house" ? "Home" : title
         b.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        b.heightAnchor.constraint(equalToConstant: 24).isActive = true
         return b
     }
     func setup() {
@@ -516,7 +517,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         backButton = button("Back", "arrow.left", #selector(back))
         forwardButton = button("Forward", "arrow.right", #selector(forward))
         let toolbar = NSStackView(views: [backButton, forwardButton, button("Up", "arrow.up", #selector(up))])
-        toolbar.spacing = 6; toolbar.heightAnchor.constraint(equalToConstant: 36).isActive = true; toolbar.addArrangedSubview(pathHost)
+        toolbar.spacing = 6; toolbar.alignment = .centerY; toolbar.heightAnchor.constraint(equalToConstant: 36).isActive = true; toolbar.addArrangedSubview(pathHost)
         pathHost.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pathHost.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
         pathHost.heightAnchor.constraint(equalToConstant: 32).isActive = true
@@ -546,7 +547,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         sidebarScroll.widthAnchor.constraint(lessThanOrEqualToConstant: 190).isActive = true
         activity.font = .systemFont(ofSize: 11); activity.textColor = .secondaryLabelColor
         let topBackground = ThemeSurface(); topBackground.fillColor = FileTheme.chrome
-        statusBar.fillColor = FileTheme.chrome
+        statusBar.fillColor = FileTheme.status
         for child in [topBackground, toolbar, tabBar!, body, statusBar] { child.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(child) }
         NSLayoutConstraint.activate([
             topBackground.leadingAnchor.constraint(equalTo: root.leadingAnchor), topBackground.trailingAnchor.constraint(equalTo: root.trailingAnchor), topBackground.topAnchor.constraint(equalTo: root.topAnchor), topBackground.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 4),
