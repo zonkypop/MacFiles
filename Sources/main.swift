@@ -326,6 +326,12 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu.items.contains(where: { $0.identifier?.rawValue == "openWith" }) {
             updateOpenWith(menu)
+            let empty = selectedIndexes.isEmpty
+            for item in menu.items {
+                if item.isSeparatorItem { item.isHidden = empty; continue }
+                let backgroundAction = item.action == #selector(Browser.newFolder) || item.action == #selector(Browser.terminal) || item.title == "Arrange Items"
+                if item.identifier?.rawValue != "openWith" { item.isHidden = empty && !backgroundAction }
+            }
             return
         }
         let descriptor = table.sortDescriptors.first
@@ -603,9 +609,9 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
             let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
             openWith.identifier = NSUserInterfaceItemIdentifier("openWith")
             menu.insertItem(openWith, at: 1); menu.delegate = p
+            menu.addItem(.separator()); menu.addItem(p.arrangementMenu())
             p.table.menu = menu
             let gridMenu = menu.copy() as! NSMenu
-            gridMenu.addItem(.separator()); gridMenu.addItem(p.arrangementMenu())
             gridMenu.delegate = p
             p.grid.menu = gridMenu
         }

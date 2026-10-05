@@ -70,6 +70,16 @@ private final class PreviewContent: NSView {
             frame.size.height = max(window.minSize.height, initial.height - dy)
             frame.origin.y = initial.maxY - frame.height
         } else if dragEdges.top { frame.size.height = max(window.minSize.height, initial.height + dy) }
+        let ratio = window.contentAspectRatio
+        if ratio.width > 0, ratio.height > 0 {
+            var content = window.contentRect(forFrameRect: frame)
+            if dragEdges.left || dragEdges.right { content.size.height = content.width * ratio.height / ratio.width }
+            else { content.size.width = content.height * ratio.width / ratio.height }
+            let fitted = window.frameRect(forContentRect: content)
+            frame.size = fitted.size
+            if dragEdges.left { frame.origin.x = initial.maxX - frame.width }
+            if dragEdges.bottom { frame.origin.y = initial.maxY - frame.height }
+        }
         window.setFrame(frame, display: true)
         window.invalidateCursorRects(for: self)
     }
@@ -94,7 +104,7 @@ final class ImagePreview: NSObject, NSWindowDelegate {
         panel.delegate = self
         panel.isReleasedWhenClosed = false
         panel.appearance = NSAppearance(named: .darkAqua)
-        panel.minSize = NSSize(width: 300, height: 220)
+        panel.minSize = NSSize(width: 100, height: 100)
         panel.collectionBehavior = [.fullScreenPrimary]
         panel.dismissPreview = { [weak self] in self?.dismiss() }
         panel.navigate = { [weak self] event in
@@ -112,13 +122,13 @@ final class ImagePreview: NSObject, NSWindowDelegate {
         message.textColor = .secondaryLabelColor; message.alignment = .center
         for view in [imageView, message] { view.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(view) }
         NSLayoutConstraint.activate([
-            imageView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
-            imageView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
-            imageView.topAnchor.constraint(equalTo: content.topAnchor, constant: 16),
-            imageView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -40),
+            imageView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 0),
+            imageView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: 0),
+            imageView.topAnchor.constraint(equalTo: content.topAnchor, constant: 0),
+            imageView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: 0),
             message.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
             message.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
-            message.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12)
+            message.centerYAnchor.constraint(equalTo: content.centerYAnchor)
         ])
     }
 
@@ -140,6 +150,7 @@ final class ImagePreview: NSObject, NSWindowDelegate {
         generation += 1; let ticket = generation
         queue.cancelAllOperations()
         imageView.image = nil
+        message.isHidden = false
         panel.title = entry.url.lastPathComponent
         guard Thumbnails.canPreview(entry) else {
             message.stringValue = "No image preview · Use arrow keys to continue"
@@ -158,10 +169,27 @@ final class ImagePreview: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { [weak self] in
                 guard let self, self.generation == ticket, self.panel.isVisible else { return }
                 self.imageView.image = image.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
-                self.message.stringValue = image == nil ? "Unable to preview this image." : "Space or Escape to close · F for full screen"
+                self.message.isHidden = image != nil
+                self.message.stringValue = image == nil ? "Unable to preview this image." : ""
+                if let image { self.fitWindow(to: NSSize(width: image.width, height: image.height)) }
             }
         }
         queue.addOperation(operation)
+    }
+
+    private func fitWindow(to imageSize: NSSize) {
+        guard imageSize.width > 0, imageSize.height > 0 else { return }
+        panel.contentAspectRatio = imageSize
+        guard !panel.styleMask.contains(.fullScreen) else { return }
+        let available = (panel.screen ?? parent?.screen ?? NSScreen.main)?.visibleFrame ?? panel.frame
+        let titleHeight = panel.frame.height - (panel.contentView?.bounds.height ?? panel.frame.height)
+        let scale = min(1, min(available.width * 0.85 / imageSize.width, (available.height * 0.85 - titleHeight) / imageSize.height))
+        let contentSize = NSSize(width: imageSize.width * scale, height: imageSize.height * scale)
+        let oldFrame = panel.frame
+        var frame = panel.frameRect(forContentRect: NSRect(origin: .zero, size: contentSize))
+        frame.origin = NSPoint(x: max(available.minX, min(oldFrame.midX - frame.width / 2, available.maxX - frame.width)),
+                               y: max(available.minY, min(oldFrame.midY - frame.height / 2, available.maxY - frame.height)))
+        panel.setFrame(frame, display: true)
     }
 
     func dismiss(restoreFocus: Bool = true) {
