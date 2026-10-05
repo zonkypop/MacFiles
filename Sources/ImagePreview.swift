@@ -103,7 +103,7 @@ final class ImagePreview: NSObject, NSWindowDelegate {
         super.init()
         panel.delegate = self
         panel.isReleasedWhenClosed = false
-        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.appearance = nil
         panel.minSize = NSSize(width: 100, height: 100)
         panel.collectionBehavior = [.fullScreenPrimary]
         panel.dismissPreview = { [weak self] in self?.dismiss() }
@@ -112,7 +112,7 @@ final class ImagePreview: NSObject, NSWindowDelegate {
             self.update(entry)
         }
         let content = PreviewContent()
-        content.wantsLayer = true; content.layer?.backgroundColor = NSColor.black.cgColor
+        content.wantsLayer = true; content.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = content
         imageView.imageScaling = .scaleProportionallyUpOrDown
         imageView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)

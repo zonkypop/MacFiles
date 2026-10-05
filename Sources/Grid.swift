@@ -121,7 +121,7 @@ final class GridItem: NSCollectionViewItem {
     private var nameHeight: NSLayoutConstraint!
     override var isSelected: Bool { didSet { updateSelection() } }
     override func loadView() {
-        view = NSView(); view.wantsLayer = true; view.layer?.cornerRadius = 4
+        view = ThemeSurface(); view.wantsLayer = true; view.layer?.cornerRadius = 4
         name.alignment = .center; name.maximumNumberOfLines = 3; name.lineBreakMode = .byTruncatingTail; name.cell?.wraps = true; name.cell?.isScrollable = false
         detail.alignment = .center; detail.textColor = .secondaryLabelColor; detail.font = .systemFont(ofSize: 12)
         icon.imageScaling = .scaleProportionallyUpOrDown; icon.imageAlignment = .alignBottom
@@ -185,8 +185,9 @@ final class GridItem: NSCollectionViewItem {
         Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil; representedKey = nil
     }
     private func updateSelection() {
-        view.layer?.backgroundColor = (isSelected ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.18) : NSColor.clear).cgColor
-        name.textColor = .labelColor
+        (view as? ThemeSurface)?.fillColor = isSelected ? FileTheme.selection : .clear
+        name.textColor = isSelected ? .black : .labelColor
+        detail.textColor = isSelected ? NSColor.black.withAlphaComponent(0.7) : .secondaryLabelColor
     }
 }
 

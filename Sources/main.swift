@@ -109,7 +109,9 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         path.target = self; path.action = #selector(pathEntered); path.delegate = self
         path.placeholderString = "Enter a folder path"
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
+        table.backgroundColor = FileTheme.canvas
         table.usesAlternatingRowBackgroundColors = false; table.rowHeight = 28
+        table.headerView?.frame.size.height = 28
         table.allowsMultipleSelection = true; table.style = .plain
         for (id, title, width) in [("name", "Name", 280.0), ("size", "Size", 90.0), ("kind", "Type", 130.0), ("date", "Modified", 165.0)] {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); col.title = title; col.width = width
@@ -126,7 +128,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         table.setDraggingSourceOperationMask(.copy, forLocal: true)
         table.registerForDraggedTypes([.fileURL])
         grid.collectionViewLayout = gridLayout; grid.isSelectable = true; grid.allowsMultipleSelection = true
-        grid.backgroundColors = [.white]; grid.dataSource = self; grid.delegate = self
+        grid.backgroundColors = [FileTheme.canvas]; grid.dataSource = self; grid.delegate = self
         grid.register(GridItem.self, forItemWithIdentifier: NSUserInterfaceItemIdentifier("file"))
         grid.activated = { [weak self] in self?.activated?() }
         grid.openSelection = { [weak self] in self?.openSelected() }
@@ -426,6 +428,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     func tableView(_ tableView: NSTableView, didRemove rowView: NSTableRowView, forRow row: Int) {
         for cell in rowView.subviews.compactMap({ $0 as? FileNameCell }) { cell.stopThumbnail() }
     }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { FileSelectionRow() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let entry = entries[row], id = tableColumn?.identifier.rawValue ?? "name"
         if id == "name" {
@@ -464,7 +467,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     var backButton: NSButton!
     var forwardButton: NSButton!
     let breadcrumbs = BreadcrumbBar()
-    let statusBar = NSView()
+    let statusBar = ThemeSurface()
     var editingPath = false
     var searching = false
     var searchWidth: NSLayoutConstraint!
@@ -489,7 +492,8 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     var pane: Pane { tab.pane }
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1150, height: 720), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.appearance = NSAppearance(named: .aqua)
+        window.appearance = nil
+        window.backgroundColor = FileTheme.chrome
         window.title = "MintFiles"; window.minSize = NSSize(width: 740, height: 420)
         super.init(window: window); window.center(); window.setFrameAutosaveName("MintFilesMain")
         window.delegate = self
@@ -509,23 +513,6 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     }
     func setup() {
         guard let root = window?.contentView else { return }
-        let menuRow = NSStackView(); menuRow.spacing = 4
-        for title in ["File", "Edit", "View", "Go", "Bookmarks", "Help"] {
-            let popup = NSPopUpButton(frame: .zero, pullsDown: true); popup.isBordered = false; (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow; popup.font = .systemFont(ofSize: 13)
-            popup.addItem(withTitle: title)
-            if let menu = NSApp.mainMenu?.items.first(where: { $0.title == title })?.submenu {
-                for item in menu.items { popup.menu?.addItem(item.copy() as! NSMenuItem) }
-            } else if title == "Bookmarks" {
-                for (label, url, _) in places.filter({ !$0.2.isEmpty }).prefix(4) {
-                    let item = NSMenuItem(title: label, action: #selector(bookmarkSelected(_:)), keyEquivalent: "")
-                    item.target = self; item.representedObject = url; popup.menu?.addItem(item)
-                }
-            } else if title == "Help" {
-                let item = NSMenuItem(title: "Keyboard Shortcuts", action: #selector(showShortcuts), keyEquivalent: "")
-                item.target = self; popup.menu?.addItem(item)
-            }
-            menuRow.addArrangedSubview(popup)
-        }
         backButton = button("Back", "arrow.left", #selector(back))
         forwardButton = button("Forward", "arrow.right", #selector(forward))
         let toolbar = NSStackView(views: [backButton, forwardButton, button("Up", "arrow.up", #selector(up))])
@@ -550,21 +537,21 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         let sidebarScroll = NSScrollView(); sidebarScroll.documentView = sidebar; sidebarScroll.hasVerticalScroller = true
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("places")); col.title = "Places"; sidebar.addTableColumn(col)
         sidebar.headerView = nil; sidebar.rowHeight = 27; sidebar.style = .plain
-        sidebar.backgroundColor = NSColor(calibratedWhite: 0.95, alpha: 1); sidebar.dataSource = self; sidebar.delegate = self
+        sidebar.intercellSpacing = NSSize(width: 0, height: 0)
+        sidebar.backgroundColor = FileTheme.sidebar; sidebar.dataSource = self; sidebar.delegate = self
         sidebar.target = self; sidebar.action = #selector(placeSelected)
         let body = NSSplitView(); body.isVertical = true; body.dividerStyle = .thin
         body.addArrangedSubview(sidebarScroll); body.addArrangedSubview(content)
         sidebarScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
         sidebarScroll.widthAnchor.constraint(lessThanOrEqualToConstant: 190).isActive = true
         activity.font = .systemFont(ofSize: 11); activity.textColor = .secondaryLabelColor
-        let topBackground = NSView(); topBackground.wantsLayer = true; topBackground.layer?.backgroundColor = NSColor(calibratedWhite: 0.91, alpha: 1).cgColor
-        statusBar.wantsLayer = true; statusBar.layer?.backgroundColor = NSColor(calibratedWhite: 0.96, alpha: 1).cgColor
-        for child in [topBackground, menuRow, toolbar, tabBar!, body, statusBar] { child.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(child) }
+        let topBackground = ThemeSurface(); topBackground.fillColor = FileTheme.chrome
+        statusBar.fillColor = FileTheme.chrome
+        for child in [topBackground, toolbar, tabBar!, body, statusBar] { child.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(child) }
         NSLayoutConstraint.activate([
-            menuRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 6), menuRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 3), menuRow.heightAnchor.constraint(equalToConstant: 24),
             topBackground.leadingAnchor.constraint(equalTo: root.leadingAnchor), topBackground.trailingAnchor.constraint(equalTo: root.trailingAnchor), topBackground.topAnchor.constraint(equalTo: root.topAnchor), topBackground.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 4),
             statusBar.leadingAnchor.constraint(equalTo: root.leadingAnchor), statusBar.trailingAnchor.constraint(equalTo: root.trailingAnchor), statusBar.bottomAnchor.constraint(equalTo: root.bottomAnchor), statusBar.heightAnchor.constraint(equalToConstant: 28),
-            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), toolbar.topAnchor.constraint(equalTo: menuRow.bottomAnchor, constant: 2), toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
+            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 5), toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
             tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10), tabBar.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 3), tabBarHeight,
             body.topAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 4), body.leadingAnchor.constraint(equalTo: root.leadingAnchor), body.trailingAnchor.constraint(equalTo: root.trailingAnchor), body.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
             toolbar.heightAnchor.constraint(equalToConstant: 36)
@@ -691,11 +678,13 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     @objc func placeSelected() { let r = sidebar.selectedRow; if places.indices.contains(r), !places[r].2.isEmpty { pane.navigate(places[r].1) } }
     func controlTextDidChange(_ obj: Notification) { pane.filter = search.stringValue; pane.reload() }
     func numberOfRows(in tableView: NSTableView) -> Int { places.count }
-    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { places[row].2.isEmpty }
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { false }
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { row == 0 ? 28 : 27 }
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { !places[row].2.isEmpty }
+    func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? { FileSelectionRow() }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         if places[row].2.isEmpty {
-            let label = NSTextField(labelWithString: "▾ " + places[row].0); label.font = .systemFont(ofSize: 12, weight: .semibold)
+            let label = NSTextField(labelWithString: "▾ " + places[row].0); label.font = .systemFont(ofSize: 13, weight: .semibold)
             let cell = NSTableCellView(); label.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(label)
             NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
             return cell
@@ -800,6 +789,15 @@ final class App: NSObject, NSApplicationDelegate {
         section("Edit", [("Cut", #selector(NSText.cut(_:)), "x", .command), ("Copy", #selector(NSText.copy(_:)), "c", .command), ("Paste", #selector(NSText.paste(_:)), "v", .command), ("Select All", #selector(NSText.selectAll(_:)), "a", .command)])
         section("View", [("Grid View", #selector(Browser.gridView), "1", .command), ("List View", #selector(Browser.listView), "2", .command), ("Larger Items", #selector(Browser.zoomIn), "=", .command), ("Smaller Items", #selector(Browser.zoomOut), "-", .command), ("Show Hidden Files", #selector(Browser.hiddenFiles), "h", .command), ("Refresh", #selector(Browser.refresh), "\u{F708}", [])])
         section("Go", [("Back", #selector(Browser.back), "[", .command), ("Forward", #selector(Browser.forward), "]", .command), ("Up", #selector(Browser.up), "\u{F700}", .command), ("Home", #selector(Browser.home), "h", [.command, .shift]), ("Location", #selector(Browser.focusPath), "l", .command), ("Open in Terminal", #selector(Browser.terminal), "", [])])
+        let bookmarks = NSMenuItem(title: "Bookmarks", action: nil, keyEquivalent: "")
+        let bookmarksMenu = NSMenu(title: "Bookmarks")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        for (title, url) in [("Home", home), ("Desktop", home.appendingPathComponent("Desktop")), ("Documents", home.appendingPathComponent("Documents")), ("Downloads", home.appendingPathComponent("Downloads"))] {
+            let item = NSMenuItem(title: title, action: #selector(Browser.bookmarkSelected(_:)), keyEquivalent: "")
+            item.representedObject = url; bookmarksMenu.addItem(item)
+        }
+        bookmarks.submenu = bookmarksMenu; main.addItem(bookmarks)
+        section("Help", [("Keyboard Shortcuts", #selector(Browser.showShortcuts), "", [])])
         NSApp.mainMenu = main
         browser = Browser(); browser?.showWindow(nil); NSApp.activate(ignoringOtherApps: true)
     }

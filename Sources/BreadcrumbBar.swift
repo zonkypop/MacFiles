@@ -4,11 +4,14 @@ private final class PathButton: NSButton {
     var url: URL?
     var currentFolder = false
     var symbol: String?
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance(); needsDisplay = true
+    }
     override func draw(_ dirtyRect: NSRect) {
         let pressed = cell?.isHighlighted == true
-        NSColor(calibratedWhite: pressed ? 0.70 : currentFolder ? 0.78 : 0.97, alpha: 1).setFill()
+        (pressed ? FileTheme.selection : currentFolder ? FileTheme.activePath : FileTheme.chrome).setFill()
         bounds.fill()
-        NSColor(calibratedWhite: 0.70, alpha: 1).setFill()
+        NSColor.separatorColor.setFill()
         NSRect(x: bounds.maxX - 1, y: 0, width: 1, height: bounds.height).fill()
         let textFont = NSFont.systemFont(ofSize: 13, weight: currentFolder ? .semibold : .regular)
         let paragraph = NSMutableParagraphStyle(); paragraph.lineBreakMode = .byTruncatingMiddle
@@ -19,7 +22,7 @@ private final class PathButton: NSButton {
         let total = min(bounds.width - 16, textSize.width + iconWidth + gap)
         let x = (bounds.width - total) / 2
         if let symbol, let icon = NSImage(systemSymbolName: symbol, accessibilityDescription: nil) {
-            let configured = icon.withSymbolConfiguration(.init(pointSize: iconWidth, weight: .semibold)) ?? icon
+            let configured = icon.withSymbolConfiguration(.init(pointSize: iconWidth, weight: .semibold).applying(.init(paletteColors: [.labelColor]))) ?? icon
             configured.draw(in: NSRect(x: x, y: (bounds.height - iconWidth) / 2, width: iconWidth, height: iconWidth))
         }
         if !title.isEmpty {
@@ -35,7 +38,7 @@ final class BreadcrumbBar: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         stack.wantsLayer = true
-        stack.layer?.borderWidth = 1; stack.layer?.borderColor = NSColor(calibratedWhite: 0.68, alpha: 1).cgColor
+        stack.layer?.borderWidth = 1; stack.layer?.borderColor = NSColor.separatorColor.cgColor
         stack.layer?.cornerRadius = 2; stack.layer?.masksToBounds = true
         stack.spacing = 0; stack.alignment = .centerY; stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
@@ -43,6 +46,11 @@ final class BreadcrumbBar: NSView {
     }
     convenience init() { self.init(frame: .zero) }
     required init?(coder: NSCoder) { fatalError() }
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        effectiveAppearance.performAsCurrentDrawingAppearance { stack.layer?.borderColor = NSColor.separatorColor.cgColor }
+        stack.arrangedSubviews.forEach { $0.needsDisplay = true }
+    }
     func setFolder(_ url: URL) { guard folder != url else { return }; folder = url; previousWidth = -1; needsLayout = true }
     override func layout() {
         super.layout()
