@@ -285,18 +285,23 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         let destination = entries.indices.contains(row) && entries[row].directory ? entries[row].url : folder
         activated?(); dropped?(urls, destination); return true
     }
+    func tableView(_ tableView: NSTableView, didRemove rowView: NSTableRowView, forRow row: Int) {
+        for cell in rowView.subviews.compactMap({ $0 as? FileNameCell }) { cell.stopThumbnail() }
+    }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let entry = entries[row], id = tableColumn?.identifier.rawValue ?? "name"
+        if id == "name" {
+            let identifier = NSUserInterfaceItemIdentifier("fileName")
+            let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? FileNameCell ?? FileNameCell()
+            cell.identifier = identifier
+            cell.configure(entry, size: min(64, iconSize / 2), fontSize: min(18, 11 + iconSize / 32))
+            return cell
+        }
         let cell = NSTableCellView()
         let label = NSTextField(labelWithString: ""); label.font = .systemFont(ofSize: min(18, 11 + iconSize / 32)); label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(label); cell.textField = label
-        var leading: CGFloat = 8
-        if id == "name" {
-            let icon = NSImageView(); icon.image = entry.directory ? MintIcons.folder : NSWorkspace.shared.icon(forFile: entry.url.path)
-            icon.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(icon)
-            NSLayoutConstraint.activate([icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6), icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor), icon.widthAnchor.constraint(equalToConstant: min(64, iconSize / 2)), icon.heightAnchor.constraint(equalToConstant: min(64, iconSize / 2))])
-            leading = min(64, iconSize / 2) + 14; label.stringValue = entry.url.lastPathComponent
-        } else if id == "size" { label.stringValue = entry.directory ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file) }
+        let leading: CGFloat = 8
+        if id == "size" { label.stringValue = entry.directory ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file) }
         else if id == "kind" { label.stringValue = entry.kind }
         else { label.stringValue = entry.modified.map { dateFormatter.string(from: $0) } ?? "—" }
         NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: leading), label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])

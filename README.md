@@ -30,7 +30,7 @@ Use the top-right buttons to switch between grid and list. Hold Control and scro
 
 ## Image thumbnails
 
-Grid thumbnails are requested only for displayed items. ImageIO downsamples originals to a maximum of 320 pixels (enough for the largest grid size on a Retina display), preserves orientation/transparency, and keeps decoding off the main thread. Quick Look is a fallback for image formats the decoder cannot handle. Failed previews retain their normal file icon.
+Grid and list thumbnails share the same cache and are requested for displayed items. List name cells are reused, and requests are cancelled when rows leave view. ImageIO downsamples originals to a maximum of 320 pixels (enough for the largest grid size on a Retina display), preserves orientation/transparency, and keeps decoding off the main thread. Quick Look is a fallback for image formats the decoder cannot handle. Failed previews retain their normal file icon.
 
 Two workers limit concurrent decoding. Requests share in-flight work, cancel when items leave the viewport, and reject stale results when a tile is reused. The memory cache has a 64 MB cost limit. A persistent PNG cache lives in `~/Library/Caches/local.mintfiles.app/Thumbnails-v1/`, with hashed filenames derived from the original path, size, and modification time. It is pruned to 256 MB at startup and periodically while writing. Cache data stays outside the repository. Cloud-only iCloud originals are skipped rather than downloaded for a preview.
 
