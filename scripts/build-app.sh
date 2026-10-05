@@ -1,9 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$ROOT/dist/MintFiles.app"
+APP="$ROOT/dist/Files.app"
 mkdir -p "$ROOT/.build/module-cache" "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -target "$(uname -m)-apple-macosx13.0" -swift-version 5 -module-cache-path "$ROOT/.build/module-cache" "$ROOT"/Sources/*.swift -o "$APP/Contents/MacOS/MintFiles"
+swiftc -target "$(uname -m)-apple-macosx13.0" -swift-version 5 -module-cache-path "$ROOT/.build/module-cache" "$ROOT"/Sources/*.swift -o "$APP/Contents/MacOS/Files"
 ICONSET="$ROOT/.build/AppIcon.iconset"
 mkdir -p "$ICONSET"
 for SIZE in 16 32 128 256 512; do
@@ -16,9 +16,10 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-<key>CFBundleExecutable</key><string>MintFiles</string>
+<key>CFBundleExecutable</key><string>Files</string>
 <key>CFBundleIdentifier</key><string>local.mintfiles.app</string>
-<key>CFBundleName</key><string>MintFiles</string>
+<key>CFBundleName</key><string>Files</string>
+<key>CFBundleDisplayName</key><string>Files</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>0.1.0</string>

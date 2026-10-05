@@ -222,7 +222,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     func navigate(_ url: URL, record: Bool = true) {
         let candidate = url.standardizedFileURL
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir), isDir.boolValue else {
+        guard candidate == FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash") || (FileManager.default.fileExists(atPath: candidate.path, isDirectory: &isDir) && isDir.boolValue) else {
             error?(NSError(domain: "MintFiles", code: 4, userInfo: [NSLocalizedDescriptionKey: "This folder is unavailable: \(candidate.path)"])); path.stringValue = folder.path; return
         }
         folder = candidate
@@ -257,6 +257,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
                     self.updateStatus()
                 case .failure(let failure):
                     self.entries = []; self.render(selected: []); self.status.stringValue = failure.localizedDescription
+                    if !silent { self.error?(failure) }
                 }
             }
         }
@@ -466,6 +467,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     let pathHost = NSView()
     var backButton: NSButton!
     var forwardButton: NSButton!
+    var emptyTrashButton: NSButton!
     let breadcrumbs = BreadcrumbBar()
     let statusBar = ThemeSurface()
     var editingPath = false
@@ -481,11 +483,11 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     var refreshTimer: Timer?
     let places: [(String, URL, String)] = {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return [("My Computer", home, ""), ("Home", home, "house"), ("Desktop", home.appendingPathComponent("Desktop"), "desktopcomputer"),
-                ("Documents", home.appendingPathComponent("Documents"), "doc"), ("Downloads", home.appendingPathComponent("Downloads"), "arrow.down.circle"),
+        return [("My Computer", home, ""), ("Home", home, "house.fill"), ("Desktop", home.appendingPathComponent("Desktop"), "desktopcomputer"),
+                ("Documents", home.appendingPathComponent("Documents"), "doc.fill"), ("Downloads", home.appendingPathComponent("Downloads"), "arrow.down.circle.fill"),
                 ("Pictures", home.appendingPathComponent("Pictures"), "photo"), ("Music", home.appendingPathComponent("Music"), "music.note"),
                 ("Videos", home.appendingPathComponent("Movies"), "video.fill"), ("Trash", home.appendingPathComponent(".Trash"), "trash.fill"),
-                ("Applications", URL(fileURLWithPath: "/Applications"), "square.grid.2x2"), ("File System", URL(fileURLWithPath: "/"), "internaldrive"),
+                ("Applications", URL(fileURLWithPath: "/Applications"), "app.fill"), ("File System", URL(fileURLWithPath: "/"), "internaldrive.fill"),
                 ("Devices", URL(fileURLWithPath: "/Volumes"), ""), ("Volumes", URL(fileURLWithPath: "/Volumes"), "externaldrive")]
     }()
     var tab: BrowserTab { tabs[currentIndex] }
@@ -494,7 +496,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1150, height: 720), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.appearance = nil
         window.backgroundColor = FileTheme.chrome
-        window.title = "MintFiles"; window.minSize = NSSize(width: 740, height: 420)
+        window.title = "Files"; window.minSize = NSSize(width: 740, height: 420)
         super.init(window: window); window.center(); window.setFrameAutosaveName("MintFilesMain")
         window.delegate = self
         setup(); newTab(nil)
@@ -522,6 +524,11 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         pathHost.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
         pathHost.heightAnchor.constraint(equalToConstant: 32).isActive = true
         search.placeholderString = "Filter this folder"; search.delegate = self; searchWidth = search.widthAnchor.constraint(equalToConstant: 0); searchWidth.isActive = true; search.isHidden = true
+        emptyTrashButton = NSButton(title: "Empty Trash", target: self, action: #selector(emptyTrash))
+        emptyTrashButton.bezelStyle = .rounded
+        emptyTrashButton.toolTip = "Permanently delete all items in this Trash"
+        emptyTrashButton.isHidden = true
+        toolbar.addArrangedSubview(emptyTrashButton)
         toolbar.addArrangedSubview(button("Location", "location", #selector(focusPath)))
         toolbar.addArrangedSubview(button("Search", "magnifyingglass", #selector(toggleSearch)))
         toolbar.addArrangedSubview(search)
@@ -586,7 +593,10 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
             }
             p.changed = { [weak self] in self?.editingPath = false; self?.updateTitle() }
             p.activated = { [weak self] in self?.updateTitle() }
-            p.error = { [weak self] e in self?.showError(e) }
+            p.error = { [weak self, weak p] e in
+                guard let self, let p else { return }
+                self.showFolderError(e, folder: p.folder)
+            }
             p.table.trashSelection = { [weak self] in self?.trash() }
             p.grid.trashSelection = { [weak self] in self?.trash() }
             p.dropped = { [weak self] urls, folder in self?.transfer(urls, to: folder, moving: false) }
@@ -630,6 +640,8 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         search.stringValue = pane.filter; updateTitle(); window?.makeFirstResponder(pane.fileView)
     }
     func updateTitle() {
+        emptyTrashButton.isHidden = pane.folder.standardizedFileURL != FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash").standardizedFileURL
+        emptyTrashButton.isEnabled = !busy
         backButton.isEnabled = pane.historyIndex > 0
         forwardButton.isEnabled = pane.historyIndex + 1 < pane.history.count
         if let row = places.firstIndex(where: { !$0.2.isEmpty && $0.1.standardizedFileURL == pane.folder.standardizedFileURL }) {
@@ -641,7 +653,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         tabsControl.segmentCount = tabs.count
         for (i, t) in tabs.enumerated() { tabsControl.setLabel(t.pane.folder.lastPathComponent.isEmpty ? "/" : t.pane.folder.lastPathComponent, forSegment: i); tabsControl.setWidth(140, forSegment: i) }
         tabsControl.selectedSegment = currentIndex
-        window?.title = "\(pane.folder.lastPathComponent.isEmpty ? "/" : pane.folder.lastPathComponent) — MintFiles"
+        window?.title = "\(pane.folder.lastPathComponent.isEmpty ? "/" : pane.folder.lastPathComponent)"
         viewModes.selectedSegment = pane.gridMode ? 0 : 1
         tabBar.isHidden = tabs.count == 1; tabBarHeight.constant = tabs.count == 1 ? 0 : 28
     }
@@ -697,6 +709,27 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         NSLayoutConstraint.activate([icon.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 12), icon.centerYAnchor.constraint(equalTo: cell.centerYAnchor), icon.widthAnchor.constraint(equalToConstant: 18), icon.heightAnchor.constraint(equalToConstant: 18), label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor), label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6)])
         return cell
     }
+    private func showFolderError(_ error: Error, folder: URL) {
+        let trash = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
+        let failure = error as NSError
+        let underlying = failure.userInfo[NSUnderlyingErrorKey] as? NSError
+        let permissionDenied = (failure.domain == NSCocoaErrorDomain && failure.code == NSFileReadNoPermissionError)
+            || (failure.domain == NSPOSIXErrorDomain && [1, 13].contains(failure.code))
+            || (underlying?.domain == NSPOSIXErrorDomain && [1, 13].contains(underlying?.code ?? 0))
+        guard folder.standardizedFileURL == trash.standardizedFileURL, permissionDenied else { showError(error); return }
+        let alert = NSAlert()
+        alert.messageText = "Full Disk Access is required to browse Trash"
+        alert.informativeText = "macOS does not show an automatic permission prompt for Trash. In System Settings → Privacy & Security → Full Disk Access, add this Files app and enable it, then quit and reopen Files. This grants access to protected files across your Mac. Moving files to Trash does not require this permission.\n\nApp location: " + Bundle.main.bundlePath
+        alert.addButton(withTitle: "Open System Settings")
+        alert.addButton(withTitle: "Open Trash in Finder")
+        alert.addButton(withTitle: "Cancel")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") { NSWorkspace.shared.open(url) }
+        case .alertSecondButtonReturn: NSWorkspace.shared.open(trash)
+        default: break
+        }
+    }
     func showError(_ error: Error) { let a = NSAlert(error: error); a.runModal() }
     func askName(title: String, value: String) -> String? {
         let alert = NSAlert(); alert.messageText = title; alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel")
@@ -750,16 +783,30 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
             }
         }, completion: { [weak self] in if moving { self?.cutting = false; self?.clipboard = []; NSPasteboard.general.clearContents() } })
     }
+    @objc func emptyTrash() {
+        let trash = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".Trash")
+        guard !busy, pane.folder.standardizedFileURL == trash.standardizedFileURL else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Permanently empty this Trash?"
+        alert.informativeText = "All items in this Mac’s user Trash will be permanently deleted. This cannot be undone. Trash on external drives is not included."
+        alert.addButton(withTitle: "Empty Trash"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        perform(label: "Emptying Trash", work: {
+            let contents = try FileManager.default.contentsOfDirectory(at: trash, includingPropertiesForKeys: nil, options: [])
+            for item in contents { try FileManager.default.removeItem(at: item) }
+        })
+    }
     @objc func trash() {
         let sources = pane.selection; guard !busy, !sources.isEmpty else { return }
         perform(label: "Moving to Trash", work: { for source in sources { try FileManager.default.trashItem(at: source, resultingItemURL: nil) } })
     }
     func perform(label: String, work: @escaping () throws -> Void, completion: (() -> Void)? = nil) {
-        busy = true; activity.stringValue = "\(label)…"
+        busy = true; emptyTrashButton.isEnabled = false; activity.stringValue = "\(label)…"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let result = Result { try work() }
             DispatchQueue.main.async {
-                guard let self else { return }; self.busy = false
+                guard let self else { return }; self.busy = false; self.emptyTrashButton.isEnabled = true
                 switch result {
                 case .success: self.activity.stringValue = "\(label) complete"; completion?()
                 case .failure(let e): self.activity.stringValue = "Operation stopped; some items may have completed"; self.showError(e)
@@ -785,7 +832,7 @@ final class App: NSObject, NSApplicationDelegate {
             for (name, action, key, flags) in items { let item = NSMenuItem(title: name, action: action, keyEquivalent: key); item.keyEquivalentModifierMask = flags; menu.addItem(item) }
             root.submenu = menu; main.addItem(root)
         }
-        section("MintFiles", [("About MintFiles", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", []), ("Quit MintFiles", #selector(NSApplication.terminate(_:)), "q", .command)])
+        section("Files", [("About Files", #selector(NSApplication.orderFrontStandardAboutPanel(_:)), "", []), ("Quit Files", #selector(NSApplication.terminate(_:)), "q", .command)])
         section("File", [("New Tab", #selector(Browser.newTab(_:)), "t", .command), ("Close Tab", #selector(Browser.closeTab(_:)), "w", .command), ("New Folder…", #selector(Browser.newFolder), "n", [.command, .shift]), ("Open", #selector(Browser.openSelection), "o", .command), ("Rename…", #selector(Browser.rename), "r", .command), ("Move to Trash", #selector(Browser.trash), "\u{8}", .command)])
         section("Edit", [("Cut", #selector(NSText.cut(_:)), "x", .command), ("Copy", #selector(NSText.copy(_:)), "c", .command), ("Paste", #selector(NSText.paste(_:)), "v", .command), ("Select All", #selector(NSText.selectAll(_:)), "a", .command)])
         section("View", [("Grid View", #selector(Browser.gridView), "1", .command), ("List View", #selector(Browser.listView), "2", .command), ("Larger Items", #selector(Browser.zoomIn), "=", .command), ("Smaller Items", #selector(Browser.zoomOut), "-", .command), ("Show Hidden Files", #selector(Browser.hiddenFiles), "h", .command), ("Refresh", #selector(Browser.refresh), "\u{F708}", [])])

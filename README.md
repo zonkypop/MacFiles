@@ -1,14 +1,14 @@
-# MintFiles
+# Files
 
 A standalone Swift/AppKit file manager for macOS, inspired by Linux Mint's Nemo. This is an initial working version, not an exact Nemo clone.
 
 ## Run
 
-Open `dist/MintFiles.app`. To rebuild with Apple's Command Line Tools:
+Open `dist/Files.app`. To rebuild with Apple's Command Line Tools:
 
 ```sh
 ./scripts/build-app.sh
-open dist/MintFiles.app
+open dist/Files.app
 ```
 
 The script builds for the current Mac architecture, targets macOS 13+, and signs the app locally. It needs no packages or network access. The app is not sandboxed or notarized. It does not replace Finder or change system defaults.
@@ -64,8 +64,8 @@ Existing destinations are refused; no overwrite option is implemented. Self-copy
 ## Verification
 
 ```sh
-dist/MintFiles.app/Contents/MacOS/MintFiles --self-test
-dist/MintFiles.app/Contents/MacOS/MintFiles --thumbnail-self-test
+dist/Files.app/Contents/MacOS/Files --self-test
+dist/Files.app/Contents/MacOS/Files --thumbnail-self-test
 ```
 
 The self-test creates and cleans up its own temporary directory. It checks visible/hidden listings, copied file contents, filename validation, conflicts, self-copy, and recursive-copy protection.
