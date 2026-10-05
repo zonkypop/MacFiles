@@ -66,10 +66,13 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     let table = FileTable()
     let grid = FileGrid()
     let scroll = ZoomScrollView()
-    let gridLayout = NSCollectionViewFlowLayout()
+    let gridLayout = NemoGridLayout()
     let sizeSlider = NSSlider(value: 72, minValue: 32, maxValue: 160, target: nil, action: nil)
     var gridMode = UserDefaults.standard.object(forKey: "gridMode") as? Bool ?? true
-    var iconSize = CGFloat(UserDefaults.standard.object(forKey: "iconSize") as? Double ?? 72)
+    var iconSize: CGFloat { gridMode ? gridIconSize : listIconSize }
+    var gridIconSize = CGFloat(UserDefaults.standard.object(forKey: "gridIconSize") as? Double ?? 80)
+    var listIconSize = CGFloat(UserDefaults.standard.object(forKey: "listIconSize") as? Double ?? 40)
+    var freeSpace: Int64?
     var selectedIndexes: IndexSet { gridMode ? grid.selectionIndexes : table.selectedRowIndexes }
     var fileView: NSView { gridMode ? grid : table }
     let path = NSTextField()
@@ -101,7 +104,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         path.target = self; path.action = #selector(pathEntered); path.delegate = self
         path.placeholderString = "Enter a folder path"
         scroll.hasVerticalScroller = true; scroll.hasHorizontalScroller = false
-        table.usesAlternatingRowBackgroundColors = true; table.rowHeight = 28
+        table.usesAlternatingRowBackgroundColors = false; table.rowHeight = 28
         table.allowsMultipleSelection = true; table.style = .plain
         for (id, title, width) in [("name", "Name", 280.0), ("size", "Size", 90.0), ("kind", "Type", 130.0), ("date", "Modified", 165.0)] {
             let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id)); col.title = title; col.width = width
@@ -127,8 +130,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         grid.setDraggingSourceOperationMask(.copy, forLocal: false)
         grid.setDraggingSourceOperationMask(.copy, forLocal: true)
         grid.registerForDraggedTypes([.fileURL])
-        gridLayout.minimumInteritemSpacing = 8; gridLayout.minimumLineSpacing = 12
-        gridLayout.sectionInset = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        gridLayout.entries = { [weak self] in self?.entries ?? [] }
         sizeSlider.target = self; sizeSlider.action = #selector(sliderChanged)
         sizeSlider.toolTip = "Item size · Control + mouse wheel"
         sizeSlider.setAccessibilityLabel("Item size")
@@ -136,17 +138,16 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         scroll.documentView = gridMode ? grid : table
         setIconSize(iconSize, persist: false)
         status.font = .systemFont(ofSize: 11); status.textColor = .secondaryLabelColor
-        for child in [scroll, status, sizeSlider] { child.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(child) }
+        scroll.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(scroll)
         NSLayoutConstraint.activate([
-            scroll.topAnchor.constraint(equalTo: view.topAnchor), scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor), scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor), scroll.bottomAnchor.constraint(equalTo: status.topAnchor, constant: -4),
-            status.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 10), status.trailingAnchor.constraint(lessThanOrEqualTo: sizeSlider.leadingAnchor, constant: -10), status.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -5), status.heightAnchor.constraint(equalToConstant: 20),
-            sizeSlider.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12), sizeSlider.centerYAnchor.constraint(equalTo: status.centerYAnchor), sizeSlider.widthAnchor.constraint(equalToConstant: 105)
+            scroll.topAnchor.constraint(equalTo: view.topAnchor), scroll.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: view.trailingAnchor), scroll.bottomAnchor.constraint(equalTo: view.bottomAnchor)
         ])
         reload()
     }
     func render(selected: Set<URL>) {
         let indexes = IndexSet(entries.indices.filter { selected.contains(entries[$0].url) })
-        table.reloadData(); grid.reloadData()
+        table.reloadData(); gridLayout.invalidateLayout(); grid.reloadData()
         table.selectRowIndexes(indexes, byExtendingSelection: false); grid.selectionIndexes = indexes
     }
     func setMode(grid enabled: Bool) {
@@ -154,18 +155,20 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         gridMode = enabled; UserDefaults.standard.set(enabled, forKey: "gridMode")
         scroll.documentView = enabled ? grid : table
         scroll.hasHorizontalScroller = !enabled
-        render(selected: selected); updateStatus()
+        setIconSize(iconSize, persist: false); render(selected: selected); updateStatus()
         view.window?.makeFirstResponder(fileView); changed?()
     }
     @objc func sliderChanged() { setIconSize(CGFloat(sizeSlider.doubleValue)) }
     func setIconSize(_ size: CGFloat, persist: Bool = true) {
         let selected = Set(selection)
-        iconSize = min(160, max(32, size)); sizeSlider.doubleValue = Double(iconSize)
-        gridLayout.itemSize = NSSize(width: max(88, iconSize + 26), height: iconSize + 68)
+        if gridMode { gridIconSize = min(160, max(32, size)) } else { listIconSize = min(128, max(32, size)) }
+        sizeSlider.maxValue = gridMode ? 160 : 128
+        sizeSlider.doubleValue = Double(iconSize)
+        gridLayout.iconSize = gridIconSize
         gridLayout.invalidateLayout()
         table.rowHeight = max(24, min(64, iconSize / 2) + 8)
         render(selected: selected)
-        if persist { UserDefaults.standard.set(Double(iconSize), forKey: "iconSize") }
+        if persist { UserDefaults.standard.set(Double(iconSize), forKey: gridMode ? "gridIconSize" : "listIconSize") }
     }
     func selectAllFiles(_ sender: Any?) { if gridMode { grid.selectAll(sender) } else { table.selectAll(sender) } }
     func numberOfSections(in collectionView: NSCollectionView) -> Int { 1 }
@@ -178,7 +181,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         (item as? GridItem)?.stopThumbnail()
     }
     func collectionView(_ collectionView: NSCollectionView, willDisplay item: NSCollectionViewItem, forRepresentedObjectAt indexPath: IndexPath) {
-        if entries.indices.contains(indexPath.item) { (item as? GridItem)?.configure(entries[indexPath.item], size: iconSize) }
+        if entries.indices.contains(indexPath.item) { (item as? GridItem)?.configure(entries[indexPath.item], size: gridIconSize, zone: gridLayout.iconZone(at: indexPath.item)) }
     }
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) { updateStatus() }
     func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { updateStatus() }
@@ -197,6 +200,12 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         dropped?(urls, destination); return true
     }
     func controlTextDidBeginEditing(_ obj: Notification) { activated?() }
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+        if control === path && commandSelector == #selector(NSResponder.cancelOperation(_:)) {
+            path.stringValue = folder.path; changed?(); view.window?.makeFirstResponder(fileView); return true
+        }
+        return false
+    }
     @objc func pathEntered() {
         let expanded = (path.stringValue as NSString).expandingTildeInPath
         let url = expanded.hasPrefix("/") ? URL(fileURLWithPath: expanded) : folder.appendingPathComponent(expanded)
@@ -226,10 +235,11 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         path.stringValue = folder.path
         if !silent { status.stringValue = "Loading…" }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let capacity = (try? current.resourceValues(forKeys: [.volumeAvailableCapacityKey]))?.volumeAvailableCapacity.map { Int64($0) }
             let result = Result { try Files.entries(at: current, hidden: hidden).filter { query.isEmpty || $0.url.lastPathComponent.localizedCaseInsensitiveContains(query) } }
             DispatchQueue.main.async {
                 guard let self, self.generation == ticket else { return }
-                self.loading = false
+                self.loading = false; self.freeSpace = capacity
                 switch result {
                 case .success(let rows):
                     let updated = self.sorted(rows)
@@ -243,7 +253,9 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         }
     }
     func updateStatus() {
-        status.stringValue = "\(entries.count) items" + (selection.isEmpty ? "" : " · \(selection.count) selected") + (showHidden ? " · hidden files shown" : "")
+        let count = "\(entries.count) " + (entries.count == 1 ? "item" : "items")
+        let space = freeSpace.map { ", Free space: " + ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? ""
+        status.stringValue = count + (selection.isEmpty ? "" : ", \(selection.count) selected") + space + (showHidden ? " · hidden files shown" : "")
     }
     @objc func openSelected() {
         guard let item = selectedIndexes.first, entries.indices.contains(item) else { return }
@@ -294,11 +306,11 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
             let identifier = NSUserInterfaceItemIdentifier("fileName")
             let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? FileNameCell ?? FileNameCell()
             cell.identifier = identifier
-            cell.configure(entry, size: min(64, iconSize / 2), fontSize: min(18, 11 + iconSize / 32))
+            cell.configure(entry, size: min(64, iconSize / 2), fontSize: 13)
             return cell
         }
         let cell = NSTableCellView()
-        let label = NSTextField(labelWithString: ""); label.font = .systemFont(ofSize: min(18, 11 + iconSize / 32)); label.lineBreakMode = .byTruncatingMiddle
+        let label = NSTextField(labelWithString: ""); label.font = .systemFont(ofSize: 13); label.lineBreakMode = .byTruncatingMiddle
         label.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(label); cell.textField = label
         let leading: CGFloat = 8
         if id == "size" { label.stringValue = entry.directory ? "—" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file) }
@@ -323,6 +335,13 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     let activity = NSTextField(labelWithString: "")
     let viewModes = NSSegmentedControl()
     let pathHost = NSView()
+    var backButton: NSButton!
+    var forwardButton: NSButton!
+    let breadcrumbs = BreadcrumbBar()
+    let statusBar = NSView()
+    var editingPath = false
+    var searching = false
+    var searchWidth: NSLayoutConstraint!
     var tabBar: NSStackView!
     var tabBarHeight: NSLayoutConstraint!
     var tabs: [BrowserTab] = []
@@ -333,11 +352,12 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     var refreshTimer: Timer?
     let places: [(String, URL, String)] = {
         let home = FileManager.default.homeDirectoryForCurrentUser
-        return [("Home", home, "house"), ("Desktop", home.appendingPathComponent("Desktop"), "desktopcomputer"),
+        return [("My Computer", home, ""), ("Home", home, "house"), ("Desktop", home.appendingPathComponent("Desktop"), "desktopcomputer"),
                 ("Documents", home.appendingPathComponent("Documents"), "doc"), ("Downloads", home.appendingPathComponent("Downloads"), "arrow.down.circle"),
                 ("Pictures", home.appendingPathComponent("Pictures"), "photo"), ("Music", home.appendingPathComponent("Music"), "music.note"),
+                ("Videos", home.appendingPathComponent("Movies"), "video.fill"), ("Trash", home.appendingPathComponent(".Trash"), "trash.fill"),
                 ("Applications", URL(fileURLWithPath: "/Applications"), "square.grid.2x2"), ("File System", URL(fileURLWithPath: "/"), "internaldrive"),
-                ("Volumes", URL(fileURLWithPath: "/Volumes"), "externaldrive")]
+                ("Devices", URL(fileURLWithPath: "/Volumes"), ""), ("Volumes", URL(fileURLWithPath: "/Volumes"), "externaldrive")]
     }()
     var tab: BrowserTab { tabs[currentIndex] }
     var pane: Pane { tab.pane }
@@ -363,12 +383,33 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     }
     func setup() {
         guard let root = window?.contentView else { return }
-        let toolbar = NSStackView(views: [button("Back", "chevron.left", #selector(back)), button("Forward", "chevron.right", #selector(forward)), button("Up", "arrow.up", #selector(up))])
-        toolbar.spacing = 7; toolbar.addArrangedSubview(pathHost)
+        let menuRow = NSStackView(); menuRow.spacing = 4
+        for title in ["File", "Edit", "View", "Go", "Bookmarks", "Help"] {
+            let popup = NSPopUpButton(frame: .zero, pullsDown: true); popup.isBordered = false; (popup.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow; popup.font = .systemFont(ofSize: 13)
+            popup.addItem(withTitle: title)
+            if let menu = NSApp.mainMenu?.items.first(where: { $0.title == title })?.submenu {
+                for item in menu.items { popup.menu?.addItem(item.copy() as! NSMenuItem) }
+            } else if title == "Bookmarks" {
+                for (label, url, _) in places.filter({ !$0.2.isEmpty }).prefix(4) {
+                    let item = NSMenuItem(title: label, action: #selector(bookmarkSelected(_:)), keyEquivalent: "")
+                    item.target = self; item.representedObject = url; popup.menu?.addItem(item)
+                }
+            } else if title == "Help" {
+                let item = NSMenuItem(title: "Keyboard Shortcuts", action: #selector(showShortcuts), keyEquivalent: "")
+                item.target = self; popup.menu?.addItem(item)
+            }
+            menuRow.addArrangedSubview(popup)
+        }
+        backButton = button("Back", "arrow.left", #selector(back))
+        forwardButton = button("Forward", "arrow.right", #selector(forward))
+        let toolbar = NSStackView(views: [backButton, forwardButton, button("Up", "arrow.up", #selector(up))])
+        toolbar.spacing = 6; toolbar.heightAnchor.constraint(equalToConstant: 36).isActive = true; toolbar.addArrangedSubview(pathHost)
         pathHost.setContentHuggingPriority(.defaultLow, for: .horizontal)
         pathHost.widthAnchor.constraint(greaterThanOrEqualToConstant: 160).isActive = true
-        pathHost.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        search.placeholderString = "Filter this folder"; search.delegate = self; search.widthAnchor.constraint(equalToConstant: 160).isActive = true
+        pathHost.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        search.placeholderString = "Filter this folder"; search.delegate = self; searchWidth = search.widthAnchor.constraint(equalToConstant: 0); searchWidth.isActive = true; search.isHidden = true
+        toolbar.addArrangedSubview(button("Location", "location", #selector(focusPath)))
+        toolbar.addArrangedSubview(button("Search", "magnifyingglass", #selector(toggleSearch)))
         toolbar.addArrangedSubview(search)
         viewModes.segmentCount = 2; viewModes.trackingMode = .selectOne; viewModes.target = self; viewModes.action = #selector(changeView)
         viewModes.setImage(NSImage(systemSymbolName: "square.grid.2x2.fill", accessibilityDescription: "Grid view"), forSegment: 0)
@@ -390,12 +431,17 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         sidebarScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
         sidebarScroll.widthAnchor.constraint(lessThanOrEqualToConstant: 190).isActive = true
         activity.font = .systemFont(ofSize: 11); activity.textColor = .secondaryLabelColor
-        for child in [toolbar, tabBar!, body, activity] { child.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(child) }
+        let topBackground = NSView(); topBackground.wantsLayer = true; topBackground.layer?.backgroundColor = NSColor(calibratedWhite: 0.91, alpha: 1).cgColor
+        statusBar.wantsLayer = true; statusBar.layer?.backgroundColor = NSColor(calibratedWhite: 0.96, alpha: 1).cgColor
+        for child in [topBackground, menuRow, toolbar, tabBar!, body, statusBar] { child.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(child) }
         NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: 7), toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
+            menuRow.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 6), menuRow.topAnchor.constraint(equalTo: root.topAnchor, constant: 3), menuRow.heightAnchor.constraint(equalToConstant: 24),
+            topBackground.leadingAnchor.constraint(equalTo: root.leadingAnchor), topBackground.trailingAnchor.constraint(equalTo: root.trailingAnchor), topBackground.topAnchor.constraint(equalTo: root.topAnchor), topBackground.bottomAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 4),
+            statusBar.leadingAnchor.constraint(equalTo: root.leadingAnchor), statusBar.trailingAnchor.constraint(equalTo: root.trailingAnchor), statusBar.bottomAnchor.constraint(equalTo: root.bottomAnchor), statusBar.heightAnchor.constraint(equalToConstant: 28),
+            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), toolbar.topAnchor.constraint(equalTo: menuRow.bottomAnchor, constant: 2), toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10),
             tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10), tabBar.topAnchor.constraint(equalTo: toolbar.bottomAnchor, constant: 3), tabBarHeight,
-            body.topAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 4), body.leadingAnchor.constraint(equalTo: root.leadingAnchor), body.trailingAnchor.constraint(equalTo: root.trailingAnchor), body.bottomAnchor.constraint(equalTo: activity.topAnchor, constant: -5),
-            activity.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 10), activity.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -10), activity.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -5), activity.heightAnchor.constraint(equalToConstant: 16)
+            body.topAnchor.constraint(equalTo: tabBar.bottomAnchor, constant: 4), body.leadingAnchor.constraint(equalTo: root.leadingAnchor), body.trailingAnchor.constraint(equalTo: root.trailingAnchor), body.bottomAnchor.constraint(equalTo: statusBar.topAnchor),
+            toolbar.heightAnchor.constraint(equalToConstant: 36)
         ])
         body.setPosition(170, ofDividerAt: 0)
     }
@@ -424,7 +470,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
                 }
                 self.imagePreview.show(p.entries[index], parent: window, focus: p.fileView)
             }
-            p.changed = { [weak self] in self?.updateTitle() }
+            p.changed = { [weak self] in self?.editingPath = false; self?.updateTitle() }
             p.activated = { [weak self] in self?.updateTitle() }
             p.error = { [weak self] e in self?.showError(e) }
             p.dropped = { [weak self] urls, folder in self?.transfer(urls, to: folder, moving: false) }
@@ -448,12 +494,26 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         content.subviews.forEach { $0.removeFromSuperview() }
         let v = pane.view; v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v)
         NSLayoutConstraint.activate([v.leadingAnchor.constraint(equalTo: content.leadingAnchor), v.trailingAnchor.constraint(equalTo: content.trailingAnchor), v.topAnchor.constraint(equalTo: content.topAnchor), v.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
-        pathHost.subviews.forEach { $0.removeFromSuperview() }
-        let path = pane.path; path.translatesAutoresizingMaskIntoConstraints = false; pathHost.addSubview(path)
-        NSLayoutConstraint.activate([path.leadingAnchor.constraint(equalTo: pathHost.leadingAnchor), path.trailingAnchor.constraint(equalTo: pathHost.trailingAnchor), path.topAnchor.constraint(equalTo: pathHost.topAnchor), path.bottomAnchor.constraint(equalTo: pathHost.bottomAnchor)])
+        editingPath = false; showPathBar()
+        statusBar.subviews.forEach { $0.removeFromSuperview() }
+        for child in [pane.status, pane.sizeSlider, activity] { child.translatesAutoresizingMaskIntoConstraints = false; statusBar.addSubview(child) }
+        pane.status.alignment = .center; pane.status.textColor = .labelColor; pane.status.font = .systemFont(ofSize: 12)
+        NSLayoutConstraint.activate([
+            pane.status.centerXAnchor.constraint(equalTo: statusBar.centerXAnchor), pane.status.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor),
+            pane.status.leadingAnchor.constraint(greaterThanOrEqualTo: statusBar.leadingAnchor, constant: 100), pane.status.trailingAnchor.constraint(lessThanOrEqualTo: pane.sizeSlider.leadingAnchor, constant: -8),
+            pane.sizeSlider.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor, constant: -10), pane.sizeSlider.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor), pane.sizeSlider.widthAnchor.constraint(equalToConstant: 95),
+            activity.leadingAnchor.constraint(equalTo: statusBar.leadingAnchor, constant: 10), activity.centerYAnchor.constraint(equalTo: statusBar.centerYAnchor), activity.trailingAnchor.constraint(lessThanOrEqualTo: pane.status.leadingAnchor, constant: -8)
+        ])
         search.stringValue = pane.filter; updateTitle(); window?.makeFirstResponder(pane.fileView)
     }
     func updateTitle() {
+        backButton.isEnabled = pane.historyIndex > 0
+        forwardButton.isEnabled = pane.historyIndex + 1 < pane.history.count
+        if let row = places.firstIndex(where: { !$0.2.isEmpty && $0.1.standardizedFileURL == pane.folder.standardizedFileURL }) {
+            sidebar.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        } else { sidebar.deselectAll(nil) }
+        breadcrumbs.setFolder(pane.folder)
+        showPathBar()
         search.stringValue = pane.filter
         tabsControl.segmentCount = tabs.count
         for (i, t) in tabs.enumerated() { tabsControl.setLabel(t.pane.folder.lastPathComponent.isEmpty ? "/" : t.pane.folder.lastPathComponent, forSegment: i); tabsControl.setWidth(140, forSegment: i) }
@@ -473,12 +533,38 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     @objc func home() { pane.navigate(FileManager.default.homeDirectoryForCurrentUser) }
     @objc func refresh() { pane.reload() }
     @objc func hiddenFiles() { pane.showHidden.toggle(); pane.reload() }
-    @objc func focusPath() { window?.makeFirstResponder(pane.path); pane.path.selectText(nil) }
+    func showPathBar() {
+        let pathView: NSView = editingPath ? pane.path : breadcrumbs
+        if pathHost.subviews.first === pathView { return }
+        pathHost.subviews.forEach { $0.removeFromSuperview() }
+        pathView.translatesAutoresizingMaskIntoConstraints = false; pathHost.addSubview(pathView)
+        breadcrumbs.setFolder(pane.folder); breadcrumbs.navigate = { [weak self] url in self?.pane.navigate(url) }
+        NSLayoutConstraint.activate([pathView.leadingAnchor.constraint(equalTo: pathHost.leadingAnchor), pathView.trailingAnchor.constraint(equalTo: pathHost.trailingAnchor), pathView.topAnchor.constraint(equalTo: pathHost.topAnchor), pathView.bottomAnchor.constraint(equalTo: pathHost.bottomAnchor)])
+    }
+    @objc func bookmarkSelected(_ sender: NSMenuItem) { if let url = sender.representedObject as? URL { pane.navigate(url) } }
+    @objc func showShortcuts() {
+        let alert = NSAlert(); alert.messageText = "Keyboard Shortcuts"
+        alert.informativeText = "Space: image preview\nArrow keys: move selection\nShift + arrows: extend selection\nControl + mouse wheel: item size\n⌘L: edit location\n⌘T: new tab\n⌘⇧N: new folder\n⌘C / ⌘X / ⌘V: copy / cut / paste\n⌘R: rename"
+        alert.runModal()
+    }
+    @objc func toggleSearch() {
+        searching.toggle(); search.isHidden = !searching; searchWidth.constant = searching ? 180 : 0
+        if searching { window?.makeFirstResponder(search) } else { search.stringValue = ""; pane.filter = ""; pane.reload(); window?.makeFirstResponder(pane.fileView) }
+    }
+    @objc func focusPath() { editingPath = true; showPathBar(); window?.makeFirstResponder(pane.path); pane.path.selectText(nil) }
     @objc func openSelection() { pane.openSelected() }
-    @objc func placeSelected() { let r = sidebar.selectedRow; if places.indices.contains(r) { pane.navigate(places[r].1) } }
+    @objc func placeSelected() { let r = sidebar.selectedRow; if places.indices.contains(r), !places[r].2.isEmpty { pane.navigate(places[r].1) } }
     func controlTextDidChange(_ obj: Notification) { pane.filter = search.stringValue; pane.reload() }
     func numberOfRows(in tableView: NSTableView) -> Int { places.count }
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool { places[row].2.isEmpty }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { !places[row].2.isEmpty }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if places[row].2.isEmpty {
+            let label = NSTextField(labelWithString: "▾ " + places[row].0); label.font = .systemFont(ofSize: 12, weight: .semibold)
+            let cell = NSTableCellView(); label.translatesAutoresizingMaskIntoConstraints = false; cell.addSubview(label)
+            NSLayoutConstraint.activate([label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6), label.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
+            return cell
+        }
         let cell = NSTableCellView(); let icon = NSImageView(); let label = NSTextField(labelWithString: places[row].0)
         icon.image = NSImage(systemSymbolName: places[row].2, accessibilityDescription: nil); icon.contentTintColor = NSColor.labelColor
         label.font = .systemFont(ofSize: 12)

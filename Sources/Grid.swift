@@ -82,6 +82,14 @@ final class FileGrid: NSCollectionView {
             super.keyDown(with: event)
         }
     }
+    override func layout() {
+        super.layout()
+        if let layout = collectionViewLayout as? NemoGridLayout {
+            for item in visibleItems() {
+                if let index = indexPath(for: item) { (item as? GridItem)?.updateGeometry(zone: layout.iconZone(at: index.item)) }
+            }
+        }
+    }
     override func menu(for event: NSEvent) -> NSMenu? {
         activated?()
         if let index = indexPathForItem(at: convert(event.locationInWindow, from: nil)) {
@@ -97,29 +105,40 @@ final class FileGrid: NSCollectionView {
 final class GridItem: NSCollectionViewItem {
     private let icon = NSImageView()
     private var thumbnailTicket: Thumbnails.Ticket?
+    private var folderCount: Operation?
+    private var entry: Entry?
+    private var configuredSize: CGFloat = 80
     private var representedKey: String?
     private let name = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private var iconWidth: NSLayoutConstraint!
     private var iconHeight: NSLayoutConstraint!
+    private var iconTop: NSLayoutConstraint!
+    private var nameTop: NSLayoutConstraint!
+    private var nameHeight: NSLayoutConstraint!
     override var isSelected: Bool { didSet { updateSelection() } }
     override func loadView() {
         view = NSView(); view.wantsLayer = true; view.layer?.cornerRadius = 4
-        name.alignment = .center; name.maximumNumberOfLines = 2; name.lineBreakMode = .byTruncatingMiddle
-        detail.alignment = .center; detail.textColor = .secondaryLabelColor; detail.font = .systemFont(ofSize: 11)
-        icon.imageScaling = .scaleProportionallyUpOrDown
+        name.alignment = .center; name.maximumNumberOfLines = 3; name.lineBreakMode = .byTruncatingTail; name.cell?.wraps = true; name.cell?.isScrollable = false
+        detail.alignment = .center; detail.textColor = .secondaryLabelColor; detail.font = .systemFont(ofSize: 12)
+        icon.imageScaling = .scaleProportionallyUpOrDown; icon.imageAlignment = .alignBottom
         for child in [icon, name, detail] { child.translatesAutoresizingMaskIntoConstraints = false; view.addSubview(child) }
         iconWidth = icon.widthAnchor.constraint(equalToConstant: 72); iconHeight = icon.heightAnchor.constraint(equalToConstant: 72)
+        iconTop = icon.topAnchor.constraint(equalTo: view.topAnchor)
+        nameTop = name.topAnchor.constraint(equalTo: view.topAnchor)
+        nameHeight = name.heightAnchor.constraint(equalToConstant: 48)
         NSLayoutConstraint.activate([
-            icon.topAnchor.constraint(equalTo: view.topAnchor, constant: 8), icon.centerXAnchor.constraint(equalTo: view.centerXAnchor), iconWidth, iconHeight,
-            name.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 7), name.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 3), name.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -3), name.heightAnchor.constraint(equalToConstant: 32),
+            iconTop, icon.centerXAnchor.constraint(equalTo: view.centerXAnchor), iconWidth, iconHeight,
+            nameTop, name.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 3), name.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -3), nameHeight,
             detail.topAnchor.constraint(equalTo: name.bottomAnchor, constant: 1), detail.leadingAnchor.constraint(equalTo: name.leadingAnchor), detail.trailingAnchor.constraint(equalTo: name.trailingAnchor)
         ])
         updateSelection()
     }
-    func configure(_ entry: Entry, size: CGFloat) {
+    func configure(_ entry: Entry, size: CGFloat, zone: CGFloat) {
         _ = view
         Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil
+        folderCount?.cancel(); folderCount = nil
+        self.entry = entry; configuredSize = size
         representedKey = Thumbnails.key(entry)
         icon.image = entry.directory ? MintIcons.folder : NSWorkspace.shared.icon(forFile: entry.url.path)
         if Thumbnails.canPreview(entry) {
@@ -129,19 +148,37 @@ final class GridItem: NSCollectionViewItem {
                 self.icon.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
             }
         }
-        iconWidth.constant = size; iconHeight.constant = size
-        name.stringValue = entry.url.lastPathComponent; name.font = .systemFont(ofSize: size > 100 ? 14 : 12)
+        updateGeometry(zone: zone)
+        name.stringValue = entry.url.lastPathComponent; name.font = GridGeometry.font
         detail.stringValue = entry.directory ? "Folder" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)
+        if entry.directory {
+            let key = representedKey
+            folderCount = FolderCounts.shared.request(entry) { [weak self] count in
+                guard let self, self.representedKey == key, let count else { return }
+                self.detail.stringValue = "\(count) " + (count == 1 ? "item" : "items")
+            }
+        }
         view.setAccessibilityElement(true); view.setAccessibilityLabel(entry.url.lastPathComponent)
         view.setAccessibilityRole(.button)
         updateSelection()
     }
+    func updateGeometry(zone: CGFloat) {
+        guard let entry else { return }
+        let size = configuredSize
+        let imageSize = GridGeometry.imageSize(entry, size: size)
+        iconWidth.constant = imageSize; iconHeight.constant = imageSize
+        iconTop.constant = zone - imageSize
+        nameTop.constant = zone + 6
+        nameHeight.constant = GridGeometry.nameHeight(entry.url.lastPathComponent, width: max(104, ceil(size * 1.2 + 8)) - 6)
+    }
     override func prepareForReuse() {
         Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil; representedKey = nil
+        folderCount?.cancel(); folderCount = nil; entry = nil
         icon.image = nil
         super.prepareForReuse()
     }
     func stopThumbnail() {
+        folderCount?.cancel(); folderCount = nil
         Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil; representedKey = nil
     }
     private func updateSelection() {
@@ -151,14 +188,14 @@ final class GridItem: NSCollectionViewItem {
 }
 
 enum MintIcons {
-    static let folder = NSImage(size: NSSize(width: 96, height: 96), flipped: false) { _ in
+    static let folder = NSImage(size: NSSize(width: 96, height: 88), flipped: false) { _ in
         NSColor(calibratedRed: 0.29, green: 0.47, blue: 0.70, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 4, y: 12, width: 88, height: 62), xRadius: 5, yRadius: 5).fill()
-        NSBezierPath(roundedRect: NSRect(x: 4, y: 62, width: 37, height: 18), xRadius: 5, yRadius: 5).fill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 96, height: 74), xRadius: 5, yRadius: 5).fill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 68, width: 42, height: 20), xRadius: 5, yRadius: 5).fill()
         NSColor(calibratedWhite: 0.88, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 8, y: 16, width: 80, height: 49), xRadius: 3, yRadius: 3).fill()
+        NSBezierPath(roundedRect: NSRect(x: 4, y: 4, width: 88, height: 64), xRadius: 3, yRadius: 3).fill()
         NSColor(calibratedRed: 0.33, green: 0.58, blue: 0.88, alpha: 1).setFill()
-        NSBezierPath(roundedRect: NSRect(x: 4, y: 10, width: 88, height: 49), xRadius: 4, yRadius: 4).fill()
+        NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: 96, height: 62), xRadius: 4, yRadius: 4).fill()
         return true
     }
 }
