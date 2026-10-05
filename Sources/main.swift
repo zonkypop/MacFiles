@@ -777,6 +777,10 @@ final class App: NSObject, NSApplicationDelegate {
     var browser: Browser?
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        if let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+           let icon = NSImage(contentsOf: iconURL) {
+            NSApp.applicationIconImage = icon
+        }
         let main = NSMenu()
         func section(_ title: String, _ items: [(String, Selector?, String, NSEvent.ModifierFlags)]) {
             let root = NSMenuItem(title: title, action: nil, keyEquivalent: ""); let menu = NSMenu(title: title)
