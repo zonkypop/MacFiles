@@ -46,9 +46,12 @@ enum Files {
 final class FileTable: NSTableView {
     var activated: (() -> Void)?
     var openSelection: (() -> Void)?
+    var previewSelection: (() -> Void)?
     override func mouseDown(with event: NSEvent) { activated?(); super.mouseDown(with: event) }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 36 { openSelection?() } else { super.keyDown(with: event) }
+        if event.keyCode == 49 && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+            if !event.isARepeat { previewSelection?() }
+        } else if event.keyCode == 36 { openSelection?() } else { super.keyDown(with: event) }
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         activated?()
@@ -81,6 +84,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     var activated: (() -> Void)?
     var error: ((Error) -> Void)?
     var dropped: (([URL], URL) -> Void)?
+    var previewSelection: (() -> Void)?
     private var generation = 0
     private var loading = false
     var dragging = false
@@ -109,6 +113,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         table.dataSource = self; table.delegate = self; table.target = self; table.doubleAction = #selector(openSelected)
         table.activated = { [weak self] in self?.activated?() }
         table.openSelection = { [weak self] in self?.openSelected() }
+        table.previewSelection = { [weak self] in self?.previewSelection?() }
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
         table.setDraggingSourceOperationMask(.copy, forLocal: true)
         table.registerForDraggedTypes([.fileURL])
@@ -117,6 +122,7 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
         grid.register(GridItem.self, forItemWithIdentifier: NSUserInterfaceItemIdentifier("file"))
         grid.activated = { [weak self] in self?.activated?() }
         grid.openSelection = { [weak self] in self?.openSelected() }
+        grid.previewSelection = { [weak self] in self?.previewSelection?() }
         grid.selectionChanged = { [weak self] in self?.updateStatus() }
         grid.setDraggingSourceOperationMask(.copy, forLocal: false)
         grid.setDraggingSourceOperationMask(.copy, forLocal: true)
@@ -303,7 +309,8 @@ final class BrowserTab {
     init(folder: URL) { pane = Pane(folder: folder) }
 }
 
-final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate {
+    let imagePreview = ImagePreview()
     let sidebar = NSTableView()
     let tabsControl = NSSegmentedControl()
     let search = NSSearchField()
@@ -334,6 +341,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         window.appearance = NSAppearance(named: .aqua)
         window.title = "MintFiles"; window.minSize = NSSize(width: 740, height: 420)
         super.init(window: window); window.center(); window.setFrameAutosaveName("MintFilesMain")
+        window.delegate = self
         setup(); newTab(nil)
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
             guard let self, !self.busy, self.window?.isVisible == true else { return }
@@ -386,8 +394,31 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         ])
         body.setPosition(170, ofDividerAt: 0)
     }
+    func windowWillClose(_ notification: Notification) {
+        imagePreview.dismiss(restoreFocus: false)
+        refreshTimer?.invalidate()
+    }
     func wire(_ t: BrowserTab) {
         for p in [t.pane] {
+            p.previewSelection = { [weak self, weak p] in
+                guard let self, let p, let index = p.selectedIndexes.first, p.entries.indices.contains(index),
+                      Thumbnails.canPreview(p.entries[index]), let window = self.window else { return }
+                self.imagePreview.navigate = { [weak p] event in
+                    guard let p, !p.entries.isEmpty else { return nil }
+                    if p.gridMode {
+                        p.grid.keyDown(with: event)
+                    } else {
+                        let forward = event.keyCode == 124 || event.keyCode == 125
+                        let current = p.table.selectedRowIndexes.first ?? 0
+                        let next = min(p.entries.count - 1, max(0, current + (forward ? 1 : -1)))
+                        p.table.selectRowIndexes(IndexSet(integer: next), byExtendingSelection: false)
+                        p.table.scrollRowToVisible(next)
+                    }
+                    guard let next = p.selectedIndexes.first, p.entries.indices.contains(next) else { return nil }
+                    return p.entries[next]
+                }
+                self.imagePreview.show(p.entries[index], parent: window, focus: p.fileView)
+            }
             p.changed = { [weak self] in self?.updateTitle() }
             p.activated = { [weak self] in self?.updateTitle() }
             p.error = { [weak self] e in self?.showError(e) }

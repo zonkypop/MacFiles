@@ -105,9 +105,11 @@ final class Thumbnails {
          kCGImageSourceShouldCacheImmediately: true,
          kCGImageSourceThumbnailMaxPixelSize: pixelLimit] as CFDictionary
     }
-    static func decode(_ url: URL) -> CGImage? {
+    static func decode(_ url: URL, maxPixelSize: Int = pixelLimit) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { return nil }
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+        var decodeOptions = options as! [CFString: Any]
+        decodeOptions[kCGImageSourceThumbnailMaxPixelSize] = maxPixelSize
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, decodeOptions as CFDictionary)
     }
     private final class ResultBox: @unchecked Sendable {
         let lock = NSLock()

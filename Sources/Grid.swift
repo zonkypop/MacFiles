@@ -17,6 +17,7 @@ final class FileGrid: NSCollectionView {
     var selectionChanged: (() -> Void)?
     var activated: (() -> Void)?
     var openSelection: (() -> Void)?
+    var previewSelection: (() -> Void)?
     private func reconcileNavigation() {
         if selectionIndexes != navigationSelection {
             selectionAnchor = selectionIndexes.first
@@ -73,6 +74,8 @@ final class FileGrid: NSCollectionView {
             } ?? 0
             if extending && selectionAnchor == nil { selectionAnchor = current ?? next }
             applySelection(focus: next, extend: extending)
+        } else if event.keyCode == 49 && modifiers.isEmpty {
+            if !event.isARepeat { previewSelection?() }
         } else if event.keyCode == 36 {
             openSelection?()
         } else {

@@ -77,3 +77,5 @@ Thumbnail tests cover downsampling/aspect ratio, memory reuse, disk reuse, sourc
 ## Next work
 
 Closer Nemo theming and breadcrumb navigation; persistent tabs; undo; transfer progress and cancellation; conflict choices; better drive and cloud integration. The app currently uses familiar macOS Command shortcuts rather than Linux Control shortcuts.
+
+Image preview: select an image in grid or list view and press **Space**. Use **arrow keys** to move the file selection and update the open preview (including grid row wrapping). Press **Space**, **Escape**, or **Q** to close and return to the selection; **F** or **F11** toggles full screen. Previews decode asynchronously at display resolution (capped at 4096 pixels), rather than stretching the small thumbnail or loading an unbounded full-resolution bitmap.
