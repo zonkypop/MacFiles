@@ -93,6 +93,8 @@ final class FileGrid: NSCollectionView {
 
 final class GridItem: NSCollectionViewItem {
     private let icon = NSImageView()
+    private var thumbnailTicket: Thumbnails.Ticket?
+    private var representedKey: String?
     private let name = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private var iconWidth: NSLayoutConstraint!
@@ -114,13 +116,30 @@ final class GridItem: NSCollectionViewItem {
     }
     func configure(_ entry: Entry, size: CGFloat) {
         _ = view
+        Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil
+        representedKey = Thumbnails.key(entry)
         icon.image = entry.directory ? MintIcons.folder : NSWorkspace.shared.icon(forFile: entry.url.path)
+        if Thumbnails.canPreview(entry) {
+            let key = representedKey
+            thumbnailTicket = Thumbnails.shared.request(entry) { [weak self] image in
+                guard let self, self.representedKey == key, let image else { return }
+                self.icon.image = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+            }
+        }
         iconWidth.constant = size; iconHeight.constant = size
         name.stringValue = entry.url.lastPathComponent; name.font = .systemFont(ofSize: size > 100 ? 14 : 12)
         detail.stringValue = entry.directory ? "Folder" : ByteCountFormatter.string(fromByteCount: entry.size, countStyle: .file)
         view.setAccessibilityElement(true); view.setAccessibilityLabel(entry.url.lastPathComponent)
         view.setAccessibilityRole(.button)
         updateSelection()
+    }
+    override func prepareForReuse() {
+        Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil; representedKey = nil
+        icon.image = nil
+        super.prepareForReuse()
+    }
+    func stopThumbnail() {
+        Thumbnails.shared.cancel(thumbnailTicket); thumbnailTicket = nil; representedKey = nil
     }
     private func updateSelection() {
         view.layer?.backgroundColor = (isSelected ? NSColor.selectedContentBackgroundColor.withAlphaComponent(0.18) : NSColor.clear).cgColor

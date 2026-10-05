@@ -166,7 +166,13 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
     func collectionView(_ collectionView: NSCollectionView, numberOfItemsInSection section: Int) -> Int { entries.count }
     func collectionView(_ collectionView: NSCollectionView, itemForRepresentedObjectAt indexPath: IndexPath) -> NSCollectionViewItem {
         let item = collectionView.makeItem(withIdentifier: NSUserInterfaceItemIdentifier("file"), for: indexPath) as! GridItem
-        item.configure(entries[indexPath.item], size: iconSize); return item
+        return item
+    }
+    func collectionView(_ collectionView: NSCollectionView, didEndDisplaying item: NSCollectionViewItem, forRepresentedObjectAt indexPath: IndexPath) {
+        (item as? GridItem)?.stopThumbnail()
+    }
+    func collectionView(_ collectionView: NSCollectionView, willDisplay item: NSCollectionViewItem, forRepresentedObjectAt indexPath: IndexPath) {
+        if entries.indices.contains(indexPath.item) { (item as? GridItem)?.configure(entries[indexPath.item], size: iconSize) }
     }
     func collectionView(_ collectionView: NSCollectionView, didSelectItemsAt indexPaths: Set<IndexPath>) { updateStatus() }
     func collectionView(_ collectionView: NSCollectionView, didDeselectItemsAt indexPaths: Set<IndexPath>) { updateStatus() }
@@ -571,7 +577,9 @@ func selfTest() throws {
     precondition(!Files.validName("../oops") && !Files.validName("..") && Files.validName("A folder"))
     print("PASS: directory listing, hidden files, copy contents, conflict protection, recursive-copy protection, self-copy protection, filename validation")
 }
-if CommandLine.arguments.contains("--self-test") {
+if CommandLine.arguments.contains("--thumbnail-self-test") {
+    do { try thumbnailSelfTest() } catch { fputs("FAIL: \(error)\n", stderr); exit(1) }
+} else if CommandLine.arguments.contains("--self-test") {
     do { try selfTest() } catch { fputs("FAIL: \(error)\n", stderr); exit(1) }
 } else {
     let app = NSApplication.shared

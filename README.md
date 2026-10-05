@@ -17,7 +17,7 @@ The script builds for the current Mac architecture, targets macOS 13+, and signs
 
 - Places sidebar, editable folder paths, back/forward/up/home navigation.
 - Multiple tabs, grid/list switching, and persistent view/size preferences.
-- Resizable grid with Mint-style folder icons, wrapped filenames, and file sizes.
+- Resizable grid with Mint-style folder icons, wrapped filenames, file sizes, and cached image thumbnails (including PNG, WebP, and AVIF on supported macOS versions).
 - Details list with sortable name, size, type, and modification columns; folders sort first.
 - Multiple selection, double-click or Return to open, local filename filtering, hidden-file toggle.
 - Copy, cut/move, paste, rename, new folders, and recoverable macOS Trash.
@@ -27,6 +27,12 @@ The script builds for the current Mac architecture, targets macOS 13+, and signs
 - Refresh every four seconds, without rebuilding an unchanged list.
 
 Use the top-right buttons to switch between grid and list. Hold Control and scroll the mouse wheel to resize items, or use the bottom-right slider. In grid view, Right continues onto the first item of the next row, and Left continues onto the last item of the previous row. Hold Shift with the arrow keys to extend a contiguous selection from the starting item across rows; reversing direction shrinks it. Shift-click extends from the same starting item. Navigation stops at the first and last items. The size and view are saved between launches. Right-click a file or blank space for file commands, including New Folder. Dragging copies; use Cut/Paste to move.
+
+## Image thumbnails
+
+Grid thumbnails are requested only for displayed items. ImageIO downsamples originals to a maximum of 320 pixels (enough for the largest grid size on a Retina display), preserves orientation/transparency, and keeps decoding off the main thread. Quick Look is a fallback for image formats the decoder cannot handle. Failed previews retain their normal file icon.
+
+Two workers limit concurrent decoding. Requests share in-flight work, cancel when items leave the viewport, and reject stale results when a tile is reused. The memory cache has a 64 MB cost limit. A persistent PNG cache lives in `~/Library/Caches/local.mintfiles.app/Thumbnails-v1/`, with hashed filenames derived from the original path, size, and modification time. It is pruned to 256 MB at startup and periodically while writing. Cache data stays outside the repository. Cloud-only iCloud originals are skipped rather than downloaded for a preview.
 
 ## Shortcuts
 
@@ -59,11 +65,14 @@ Existing destinations are refused; no overwrite option is implemented. Self-copy
 
 ```sh
 dist/MintFiles.app/Contents/MacOS/MintFiles --self-test
+dist/MintFiles.app/Contents/MacOS/MintFiles --thumbnail-self-test
 ```
 
 The self-test creates and cleans up its own temporary directory. It checks visible/hidden listings, copied file contents, filename validation, conflicts, self-copy, and recursive-copy protection.
 
 The running app was also tested with disposable files for navigation, tabs, copy, cut/move, rename, new-folder creation, and filtering. The grid/list update was checked in the running app for view switching, retained selection, resizing with the slider, and the grid context menu. Shift-arrow selection was verified across row boundaries in both directions, including shrinking and reversing past the anchor, and with vertical movement. Control-wheel is implemented in the scroll view but still needs a physical mouse check. Drag/drop, Trash restoration, large transfers, cloud files, network drives, and protected-folder access still need wider testing.
+
+Thumbnail tests cover downsampling/aspect ratio, memory reuse, disk reuse, source invalidation, shared requests, cancellation, and WebP/AVIF decoding. PNG, WebP, and AVIF previews were visually checked in the app, along with fast scrolling through 100 images and fallback for a broken image.
 
 ## Next work
 
