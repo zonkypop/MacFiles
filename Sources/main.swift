@@ -47,10 +47,13 @@ enum Files {
 final class FileTable: NSTableView {
     var activated: (() -> Void)?
     var openSelection: (() -> Void)?
+    var trashSelection: (() -> Void)?
     var previewSelection: (() -> Void)?
     override func mouseDown(with event: NSEvent) { activated?(); super.mouseDown(with: event) }
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 49 && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+        if (event.keyCode == 51 || event.keyCode == 117) && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
+            if !event.isARepeat { trashSelection?() }
+        } else if event.keyCode == 49 && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
             if !event.isARepeat { previewSelection?() }
         } else if event.keyCode == 36 { openSelection?() } else { super.keyDown(with: event) }
     }
@@ -590,6 +593,8 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
             p.changed = { [weak self] in self?.editingPath = false; self?.updateTitle() }
             p.activated = { [weak self] in self?.updateTitle() }
             p.error = { [weak self] e in self?.showError(e) }
+            p.table.trashSelection = { [weak self] in self?.trash() }
+            p.grid.trashSelection = { [weak self] in self?.trash() }
             p.dropped = { [weak self] urls, folder in self?.transfer(urls, to: folder, moving: false) }
             let menu = NSMenu()
             for (title, action) in [("Open", #selector(openSelection)), ("Copy", #selector(copyFiles)), ("Cut", #selector(cutFiles)), ("Paste", #selector(pasteFiles)), ("Rename…", #selector(rename)), ("Move to Trash", #selector(trash)), ("New Folder…", #selector(newFolder)), ("Open in Terminal", #selector(terminal))] {
@@ -751,9 +756,6 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     }
     @objc func trash() {
         let sources = pane.selection; guard !busy, !sources.isEmpty else { return }
-        let alert = NSAlert(); alert.messageText = "Move \(sources.count) item\(sources.count == 1 ? "" : "s") to Trash?"
-        alert.informativeText = "You can restore these items from the macOS Trash."; alert.addButton(withTitle: "Move to Trash"); alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
         perform(label: "Moving to Trash", work: { for source in sources { try FileManager.default.trashItem(at: source, resultingItemURL: nil) } })
     }
     func perform(label: String, work: @escaping () throws -> Void, completion: (() -> Void)? = nil) {

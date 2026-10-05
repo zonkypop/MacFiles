@@ -17,6 +17,7 @@ final class FileGrid: NSCollectionView {
     var selectionChanged: (() -> Void)?
     var activated: (() -> Void)?
     var openSelection: (() -> Void)?
+    var trashSelection: (() -> Void)?
     var previewSelection: (() -> Void)?
     private func reconcileNavigation() {
         if selectionIndexes != navigationSelection {
@@ -59,7 +60,9 @@ final class FileGrid: NSCollectionView {
     }
     override func keyDown(with event: NSEvent) {
         let modifiers = event.modifierFlags.intersection([.shift, .control, .option, .command])
-        if (123...126).contains(event.keyCode) && (modifiers.isEmpty || modifiers == .shift) {
+        if (event.keyCode == 51 || event.keyCode == 117) && modifiers.isEmpty {
+            if !event.isARepeat { trashSelection?() }
+        } else if (123...126).contains(event.keyCode) && (modifiers.isEmpty || modifiers == .shift) {
             let count = numberOfItems(inSection: 0)
             guard count > 0 else { return }
             reconcileNavigation()
