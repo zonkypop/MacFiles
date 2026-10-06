@@ -17,6 +17,8 @@ enum FileTheme {
         dark: NSColor(srgbRed: 0.120, green: 0.121, blue: 0.128, alpha: 1))
     static let activePath = adaptive("FileActivePath", light: .quaternaryLabelColor,
         dark: NSColor(srgbRed: 0.225, green: 0.227, blue: 0.241, alpha: 1))
+    static let activeTab = adaptive("FileActiveTab", light: NSColor(calibratedWhite: 0.83, alpha: 1),
+        dark: NSColor(srgbRed: 0.255, green: 0.257, blue: 0.270, alpha: 1))
     static let selection = NSColor(srgbRed: 71.0 / 255, green: 169.0 / 255, blue: 1, alpha: 1)
 
 }

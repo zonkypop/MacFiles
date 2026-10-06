@@ -17,6 +17,8 @@ final class FileGrid: NSCollectionView {
     var selectionChanged: (() -> Void)?
     var activated: (() -> Void)?
     var openSelection: (() -> Void)?
+    var openNewTab: (() -> Void)?
+    var middleClick: ((Int) -> Void)?
     var trashSelection: (() -> Void)?
     var previewSelection: (() -> Void)?
     private func reconcileNavigation() {
@@ -49,6 +51,10 @@ final class FileGrid: NSCollectionView {
         navigationSelection = selectionIndexes
         if event.clickCount == 2 { openSelection?() }
     }
+    override func otherMouseDown(with event: NSEvent) {
+        if event.buttonNumber == 2, let index = indexPathForItem(at: convert(event.locationInWindow, from: nil))?.item { middleClick?(index) }
+        else { super.otherMouseDown(with: event) }
+    }
     private func columns(count: Int) -> Int {
         layoutSubtreeIfNeeded()
         guard let first = collectionViewLayout?.layoutAttributesForItem(at: IndexPath(item: 0, section: 0)) else { return 1 }
@@ -79,6 +85,8 @@ final class FileGrid: NSCollectionView {
             applySelection(focus: next, extend: extending)
         } else if event.keyCode == 49 && modifiers.isEmpty {
             if !event.isARepeat { previewSelection?() }
+        } else if event.keyCode == 36 && modifiers == .shift {
+            openNewTab?()
         } else if event.keyCode == 36 {
             openSelection?()
         } else {

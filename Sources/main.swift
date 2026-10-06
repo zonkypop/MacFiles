@@ -47,6 +47,8 @@ enum Files {
 final class FileTable: NSTableView {
     var activated: (() -> Void)?
     var openSelection: (() -> Void)?
+    var openNewTab: (() -> Void)?
+    var middleClick: ((Int) -> Void)?
     var trashSelection: (() -> Void)?
     var previewSelection: (() -> Void)?
     override func mouseDown(with event: NSEvent) { activated?(); super.mouseDown(with: event) }
@@ -55,7 +57,13 @@ final class FileTable: NSTableView {
             if !event.isARepeat { trashSelection?() }
         } else if event.keyCode == 49 && event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty {
             if !event.isARepeat { previewSelection?() }
-        } else if event.keyCode == 36 { openSelection?() } else { super.keyDown(with: event) }
+        } else if event.keyCode == 36 && event.modifierFlags.contains(.shift) { openNewTab?() } else if event.keyCode == 36 { openSelection?() } else { super.keyDown(with: event) }
+    }
+    override func otherMouseDown(with event: NSEvent) {
+        if event.buttonNumber == 2 {
+            let index = row(at: convert(event.locationInWindow, from: nil))
+            if index >= 0 { middleClick?(index) }
+        } else { super.otherMouseDown(with: event) }
     }
     override func menu(for event: NSEvent) -> NSMenu? {
         activated?()
@@ -333,7 +341,11 @@ final class Pane: NSViewController, NSTableViewDataSource, NSTableViewDelegate, 
             for item in menu.items {
                 if item.isSeparatorItem { item.isHidden = empty; continue }
                 let backgroundAction = item.action == #selector(Browser.newFolder) || item.action == #selector(Browser.terminal) || item.title == "Arrange Items"
-                if item.identifier?.rawValue != "openWith" { item.isHidden = empty && !backgroundAction }
+                if item.identifier?.rawValue == "openNewTab" {
+                    item.isHidden = empty || selection.contains { url in !entries.contains { $0.url == url && $0.directory } }
+                } else if item.action == #selector(Browser.openSelection) {
+                    item.isHidden = empty || selectedIndexes.allSatisfy { entries.indices.contains($0) && entries[$0].directory }
+                } else if item.identifier?.rawValue != "openWith" { item.isHidden = empty && !backgroundAction }
             }
             return
         }
@@ -458,8 +470,8 @@ final class BrowserTab {
 
 final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate {
     let imagePreview = ImagePreview()
-    let sidebar = NSTableView()
-    let tabsControl = NSSegmentedControl()
+    let sidebar = PlacesTable()
+    let tabsControl = FolderTabBar()
     let search = NSSearchField()
     let content = NSView()
     let activity = NSTextField(labelWithString: "")
@@ -481,6 +493,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     var cutting = false
     var busy = false
     var refreshTimer: Timer?
+    var tabKeyMonitor: Any?
     let places: [(String, URL, String)] = {
         let home = FileManager.default.homeDirectoryForCurrentUser
         return [("My Computer", home, ""), ("Home", home, "house.fill"), ("Desktop", home.appendingPathComponent("Desktop"), "desktopcomputer"),
@@ -500,6 +513,17 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         super.init(window: window); window.center(); window.setFrameAutosaveName("MintFilesMain")
         window.delegate = self
         setup(); newTab(nil)
+        tabKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if event.keyCode == 48 && (flags == .control || flags == [.control, .shift]) {
+                self.currentIndex = (self.currentIndex + (flags.contains(.shift) ? self.tabs.count - 1 : 1)) % self.tabs.count
+                self.displayTab(); return nil
+            }
+            if event.charactersIgnoringModifiers?.lowercased() == "t" && flags == .control { self.newTab(nil); return nil }
+            if event.charactersIgnoringModifiers?.lowercased() == "w" && flags == .control { self.closeTab(nil); return nil }
+            return event
+        }
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 4, repeats: true) { [weak self] _ in
             guard let self, !self.busy, self.window?.isVisible == true else { return }
             self.pane.reload(silent: true)
@@ -537,10 +561,15 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         viewModes.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "List view"), forSegment: 1)
         viewModes.setToolTip("Grid view", forSegment: 0); viewModes.setToolTip("List view", forSegment: 1)
         toolbar.addArrangedSubview(viewModes)
-        let add = button("New tab", "plus", #selector(newTab)); add.toolTip = "New tab (⌘T)"
-        let close = button("Close tab", "xmark", #selector(closeTab)); close.toolTip = "Close tab (⌘W)"
-        tabsControl.target = self; tabsControl.action = #selector(selectTab); tabsControl.trackingMode = .selectOne
-        tabBar = NSStackView(views: [tabsControl, add, close]); tabBar.spacing = 6
+        tabsControl.select = { [weak self] index in self?.currentIndex = index; self?.displayTab() }
+        tabsControl.close = { [weak self] index in self?.closeTab(at: index) }
+        tabsControl.move = { [weak self] source, destination in
+            guard let self else { return }
+            let active = self.tab
+            let moved = self.tabs.remove(at: source); self.tabs.insert(moved, at: destination)
+            self.currentIndex = self.tabs.firstIndex(where: { $0 === active }) ?? 0; self.updateTitle()
+        }
+        tabBar = NSStackView(views: [tabsControl]); tabBar.spacing = 0
         tabBarHeight = tabBar.heightAnchor.constraint(equalToConstant: 0)
         let sidebarScroll = NSScrollView(); sidebarScroll.documentView = sidebar; sidebarScroll.hasVerticalScroller = true
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("places")); col.title = "Places"; sidebar.addTableColumn(col)
@@ -548,6 +577,19 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         sidebar.intercellSpacing = NSSize(width: 0, height: 0)
         sidebar.backgroundColor = FileTheme.sidebar; sidebar.dataSource = self; sidebar.delegate = self
         sidebar.target = self; sidebar.action = #selector(placeSelected)
+        sidebar.contextMenu = { [weak self] row in
+            guard let self, self.places.indices.contains(row), !self.places[row].2.isEmpty else { return nil }
+            let menu = NSMenu()
+            for (title, action) in [("Open in New Tab", #selector(self.openPlaceInTab(_:)))] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self; item.representedObject = self.places[row].1; menu.addItem(item)
+            }
+            return menu
+        }
+        sidebar.middleClick = { [weak self] row in
+            guard let self, self.places.indices.contains(row), !self.places[row].2.isEmpty else { return }
+            self.openTab(folder: self.places[row].1)
+        }
         let body = NSSplitView(); body.isVertical = true; body.dividerStyle = .thin
         body.addArrangedSubview(sidebarScroll); body.addArrangedSubview(content)
         sidebarScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
@@ -569,6 +611,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     func windowWillClose(_ notification: Notification) {
         imagePreview.dismiss(restoreFocus: false)
         refreshTimer?.invalidate()
+        if let tabKeyMonitor { NSEvent.removeMonitor(tabKeyMonitor) }
     }
     func wire(_ t: BrowserTab) {
         for p in [t.pane] {
@@ -591,7 +634,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
                 }
                 self.imagePreview.show(p.entries[index], parent: window, focus: p.fileView)
             }
-            p.changed = { [weak self] in self?.editingPath = false; self?.updateTitle() }
+            p.changed = { [weak self, weak p] in guard let self, let p, p === self.pane else { return }; self.editingPath = false; self.updateTitle() }
             p.activated = { [weak self] in self?.updateTitle() }
             p.error = { [weak self, weak p] e in
                 guard let self, let p else { return }
@@ -604,6 +647,16 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
             for (title, action) in [("Open", #selector(openSelection)), ("Copy", #selector(copyFiles)), ("Cut", #selector(cutFiles)), ("Paste", #selector(pasteFiles)), ("Rename…", #selector(rename)), ("Move to Trash", #selector(trash)), ("New Folder…", #selector(newFolder)), ("Open in Terminal", #selector(terminal))] {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: ""); item.target = self; menu.addItem(item)
             }
+            let openTab = NSMenuItem(title: "Open in New Tab", action: #selector(openFoldersInTabs), keyEquivalent: "")
+            openTab.identifier = NSUserInterfaceItemIdentifier("openNewTab"); openTab.target = self
+            menu.insertItem(openTab, at: 1)
+            p.table.openNewTab = { [weak self] in self?.openFoldersInTabs() }
+            p.grid.openNewTab = { [weak self] in self?.openFoldersInTabs() }
+            p.table.middleClick = { [weak self, weak p] index in
+                guard let self, let p, p.entries.indices.contains(index), p.entries[index].directory else { return }
+                self.openTab(folder: p.entries[index].url)
+            }
+            p.grid.middleClick = p.table.middleClick
             let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
             openWith.identifier = NSUserInterfaceItemIdentifier("openWith")
             menu.insertItem(openWith, at: 1); menu.delegate = p
@@ -615,15 +668,33 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         }
     }
     @objc func newTab(_ sender: Any?) {
-        let folder = tabs.isEmpty ? FileManager.default.homeDirectoryForCurrentUser : pane.folder
-        let t = BrowserTab(folder: folder); wire(t); tabs.append(t); currentIndex = tabs.count - 1; displayTab()
+        openTab(folder: tabs.isEmpty ? FileManager.default.homeDirectoryForCurrentUser : pane.folder)
     }
-    @objc func closeTab(_ sender: Any?) {
+    func openTab(folder: URL) {
+        let t = BrowserTab(folder: folder)
+        let index = tabs.isEmpty ? 0 : currentIndex + 1
+        wire(t); tabs.insert(t, at: index); currentIndex = index; displayTab()
+    }
+    @objc func openFoldersInTabs() {
+        let folders = pane.selectedIndexes.compactMap { index -> URL? in
+            guard pane.entries.indices.contains(index), pane.entries[index].directory else { return nil }
+            return pane.entries[index].url
+        }
+        for folder in folders { openTab(folder: folder) }
+    }
+    @objc func openPlace(_ sender: NSMenuItem) { if let url = sender.representedObject as? URL { pane.navigate(url) } }
+    @objc func openPlaceInTab(_ sender: NSMenuItem) { if let url = sender.representedObject as? URL { openTab(folder: url) } }
+    @objc func closeTab(_ sender: Any?) { closeTab(at: currentIndex) }
+    func closeTab(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
         guard tabs.count > 1 else { window?.close(); return }
-        tabs.remove(at: currentIndex); currentIndex = min(currentIndex, tabs.count - 1); displayTab()
+        let active = tab
+        tabs.remove(at: index)
+        currentIndex = tabs.firstIndex(where: { $0 === active }) ?? min(index, tabs.count - 1)
+        displayTab()
     }
-    @objc func selectTab() { currentIndex = tabsControl.selectedSegment; displayTab() }
     func displayTab() {
+        imagePreview.dismiss(restoreFocus: false)
         content.subviews.forEach { $0.removeFromSuperview() }
         let v = pane.view; v.translatesAutoresizingMaskIntoConstraints = false; content.addSubview(v)
         NSLayoutConstraint.activate([v.leadingAnchor.constraint(equalTo: content.leadingAnchor), v.trailingAnchor.constraint(equalTo: content.trailingAnchor), v.topAnchor.constraint(equalTo: content.topAnchor), v.bottomAnchor.constraint(equalTo: content.bottomAnchor)])
@@ -650,12 +721,10 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         breadcrumbs.setFolder(pane.folder)
         showPathBar()
         search.stringValue = pane.filter
-        tabsControl.segmentCount = tabs.count
-        for (i, t) in tabs.enumerated() { tabsControl.setLabel(t.pane.folder.lastPathComponent.isEmpty ? "/" : t.pane.folder.lastPathComponent, forSegment: i); tabsControl.setWidth(140, forSegment: i) }
-        tabsControl.selectedSegment = currentIndex
+        tabsControl.update(folders: tabs.map { $0.pane.folder }, selected: currentIndex)
         window?.title = "\(pane.folder.lastPathComponent.isEmpty ? "/" : pane.folder.lastPathComponent)"
         viewModes.selectedSegment = pane.gridMode ? 0 : 1
-        tabBar.isHidden = tabs.count == 1; tabBarHeight.constant = tabs.count == 1 ? 0 : 28
+        tabBar.isHidden = tabs.count == 1; tabBarHeight.constant = tabs.count == 1 ? 0 : 32
     }
     @objc func changeView() { pane.setMode(grid: viewModes.selectedSegment == 0) }
     @objc func gridView() { pane.setMode(grid: true) }
