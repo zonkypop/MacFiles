@@ -470,6 +470,7 @@ final class BrowserTab {
 
 final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSWindowDelegate {
     let imagePreview = ImagePreview()
+    var propertiesWindows: [PropertiesWindow] = []
     let sidebar = PlacesTable()
     let tabsControl = FolderTabBar()
     let search = NSSearchField()
@@ -580,7 +581,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         sidebar.contextMenu = { [weak self] row in
             guard let self, self.places.indices.contains(row), !self.places[row].2.isEmpty else { return nil }
             let menu = NSMenu()
-            for (title, action) in [("Open in New Tab", #selector(self.openPlaceInTab(_:)))] {
+            for (title, action) in [("Open in New Tab", #selector(self.openPlaceInTab(_:))), ("Show Properties", #selector(self.showProperties(_:)))] {
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                 item.target = self; item.representedObject = self.places[row].1; menu.addItem(item)
             }
@@ -610,6 +611,7 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
     }
     func windowWillClose(_ notification: Notification) {
         imagePreview.dismiss(restoreFocus: false)
+        for controller in propertiesWindows { controller.close() }
         refreshTimer?.invalidate()
         if let tabKeyMonitor { NSEvent.removeMonitor(tabKeyMonitor) }
     }
@@ -657,6 +659,8 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
                 self.openTab(folder: p.entries[index].url)
             }
             p.grid.middleClick = p.table.middleClick
+            let properties = NSMenuItem(title: "Show Properties", action: #selector(showProperties(_:)), keyEquivalent: "")
+            properties.target = self; menu.addItem(properties)
             let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
             openWith.identifier = NSUserInterfaceItemIdentifier("openWith")
             menu.insertItem(openWith, at: 1); menu.delegate = p
@@ -683,6 +687,15 @@ final class Browser: NSWindowController, NSTableViewDataSource, NSTableViewDeleg
         for folder in folders { openTab(folder: folder) }
     }
     @objc func openPlace(_ sender: NSMenuItem) { if let url = sender.representedObject as? URL { pane.navigate(url) } }
+    @objc func showProperties(_ sender: Any?) {
+        let urls = (sender as? NSMenuItem)?.representedObject as? URL
+        let selected = urls.map { [$0] } ?? pane.selection
+        guard !selected.isEmpty else { return }
+        let controller = PropertiesWindow(urls: selected)
+        controller.closed = { [weak self, weak controller] in self?.propertiesWindows.removeAll { $0 === controller } }
+        controller.renamed = { [weak self] in self?.pane.reload() }
+        propertiesWindows.append(controller); controller.showWindow(nil)
+    }
     @objc func openPlaceInTab(_ sender: NSMenuItem) { if let url = sender.representedObject as? URL { openTab(folder: url) } }
     @objc func closeTab(_ sender: Any?) { closeTab(at: currentIndex) }
     func closeTab(at index: Int) {
